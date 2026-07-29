@@ -14,8 +14,8 @@ from ltx_core.model.transformer.compiling import CompilationConfig
 from ltx_core.model.video_vae import TilingConfig
 from ltx_core.quantization import QuantizationPolicy
 from ltx_core.text_encoders.gemma.embeddings_processor import EmbeddingsProcessorOutput
-from ltx_core.types import Audio, AudioLatentShape
-from ltx_pipelines.avatar.metrics import MetricsRecorder, TimedDenoiser
+from ltx_core.types import Audio, AudioLatentShape, LatentState
+from ltx_pipelines.avatar.metrics import MetricsRecorder, TimedDenoiser, tensor_snapshot
 from ltx_pipelines.utils.allocator_trim_strategy import AllocatorTrimStrategy
 from ltx_pipelines.utils.args import ImageConditioningInput
 from ltx_pipelines.utils.blocks import (
@@ -25,10 +25,14 @@ from ltx_pipelines.utils.blocks import (
     PromptEncoder,
     VideoDecoder,
 )
-from ltx_pipelines.utils.denoisers import SimpleDenoiser
-from ltx_pipelines.utils.helpers import assert_resolution, combined_image_conditionings, get_device
+from ltx_pipelines.utils.helpers import (
+    assert_resolution,
+    combined_image_conditionings,
+    get_device,
+    modality_from_latent_state,
+)
 from ltx_pipelines.utils.media_io import decode_audio_from_file
-from ltx_pipelines.utils.types import ModalitySpec, OffloadMode
+from ltx_pipelines.utils.types import DenoisedLatentResult, ModalitySpec, OffloadMode
 
 
 @dataclass(frozen=True)
@@ -41,6 +45,35 @@ class AvatarPromptContext:
 class AvatarChunkResult:
     video: Iterator[torch.Tensor]
     audio: Audio
+
+
+class DrivingAudioDenoiser:
+    """Denoise video while exposing fixed driving audio as a clean modality."""
+
+    def __init__(self, video_context: torch.Tensor, audio_context: torch.Tensor) -> None:
+        self._video_context = video_context
+        self._audio_context = audio_context
+
+    def __call__(
+        self,
+        transformer: X0Model,
+        video_state: LatentState | None,
+        audio_state: LatentState | None,
+        sigmas: torch.Tensor,
+        step_index: int,
+    ) -> tuple[DenoisedLatentResult | None, DenoisedLatentResult | None]:
+        if video_state is None or audio_state is None:
+            raise ValueError("Driving-audio avatar denoising requires both video and audio latent states")
+
+        video_sigma = sigmas[step_index]
+        audio_sigma = torch.zeros_like(video_sigma)
+        video = modality_from_latent_state(video_state, self._video_context, video_sigma)
+        audio = modality_from_latent_state(audio_state, self._audio_context, audio_sigma)
+        denoised_video, denoised_audio = transformer(video=video, audio=audio, perturbations=None)
+        return (
+            DenoisedLatentResult.result_or_none(denoised_video),
+            DenoisedLatentResult.result_or_none(denoised_audio),
+        )
 
 
 class AvatarA2VidPipeline:
@@ -189,6 +222,24 @@ class AvatarA2VidPipeline:
                 raise RuntimeError(
                     f"Audio encoder returned {encoded_audio.shape[2]} latent frames; expected {required_audio_frames}"
                 )
+            waveform = decoded_audio.waveform.detach().float()
+            latent_values = encoded_audio.detach().float()
+            recorder.emit(
+                "driving_audio_ready",
+                chunk_index=chunk_index,
+                audio_start_time=audio_start_time,
+                duration_seconds=generation_duration,
+                sampling_rate=decoded_audio.sampling_rate,
+                source_channels=decoded_audio.waveform.shape[1],
+                waveform_rms=waveform.square().mean().sqrt().item(),
+                waveform_peak=waveform.abs().max().item(),
+                encoded_audio=tensor_snapshot(encoded_audio),
+                encoded_audio_mean=latent_values.mean().item(),
+                encoded_audio_std=latent_values.std().item(),
+                encoded_audio_min=latent_values.min().item(),
+                encoded_audio_max=latent_values.max().item(),
+                audio_sigma_policy="zero_clean",
+            )
 
         with recorder.phase("image_conditioning", chunk_index=chunk_index, image_count=len(images)):
             conditionings = self.image_conditioner(
@@ -203,7 +254,7 @@ class AvatarA2VidPipeline:
             )
 
         denoiser = TimedDenoiser(
-            SimpleDenoiser(context.video, context.audio),
+            DrivingAudioDenoiser(context.video, context.audio),
             recorder=recorder,
             chunk_index=chunk_index,
             enabled=log_denoising_steps,
