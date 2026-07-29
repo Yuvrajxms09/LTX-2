@@ -251,6 +251,21 @@ for chunk in sorted(run_dir.glob("chunk_*.mp4")):
     display(Video(str(chunk), embed=True))
 ```
 
+For a failed run, print the execution boundary, completed/failed phases, first
+denoising preflight, and complete traceback:
+
+```python
+records = [
+    json.loads(line)
+    for line in (run_dir / "metrics.jsonl").read_text().splitlines()
+    if line.strip()
+]
+important_events = {"run_started", "phase", "denoising_preflight", "run_failed"}
+for record in records:
+    if record["event"] in important_events:
+        print(json.dumps(record, indent=2))
+```
+
 Check `time_to_first_chunk_seconds`, following-chunk `denoising_fps`,
 `real_time_factor`, `meets_realtime_deadline`, `deadline_margin_seconds`, and
 the overlap/boundary continuity metrics.

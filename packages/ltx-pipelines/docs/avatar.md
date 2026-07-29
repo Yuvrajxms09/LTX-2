@@ -82,6 +82,14 @@ audio muxing. CUDA synchronization is enabled by default so timings describe
 completed GPU work rather than asynchronous dispatch. Disable it only for
 minimum-overhead runs.
 
+The complete runner executes under `torch.inference_mode()`, matching Scope and
+the official LTX inference CLIs. `run_started` records whether gradients and
+inference mode are active. Before the first denoising step of every chunk,
+`denoising_preflight` records shape, dtype, device, gradient, and inference
+metadata for the video latent, frozen audio latent, and sigma schedule. Failed
+runs persist the complete Python traceback in both `manifest.json` and
+`metrics.jsonl`.
+
 The manifest snapshots the effective configuration and runtime metadata,
 including Python, PyTorch, CUDA, cuDNN, GPU model, compute capability, and total
 VRAM. Initialization, model-loading, and prompt failures are persisted with

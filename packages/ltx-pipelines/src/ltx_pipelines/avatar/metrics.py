@@ -20,6 +20,24 @@ from ltx_pipelines.utils.types import DenoisedLatentResult, Denoiser
 logger = logging.getLogger(__name__)
 
 
+def execution_snapshot() -> dict[str, bool]:
+    return {
+        "grad_enabled": torch.is_grad_enabled(),
+        "inference_mode_enabled": torch.is_inference_mode_enabled(),
+    }
+
+
+def tensor_snapshot(tensor: torch.Tensor) -> dict[str, bool | int | list[int] | str]:
+    return {
+        "shape": list(tensor.shape),
+        "dtype": str(tensor.dtype),
+        "device": str(tensor.device),
+        "numel": tensor.numel(),
+        "requires_grad": tensor.requires_grad,
+        "is_inference": torch.is_inference(tensor),
+    }
+
+
 def _rss_bytes() -> int:
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return int(rss if sys.platform == "darwin" else rss * 1024)
@@ -171,6 +189,16 @@ class TimedDenoiser(Denoiser):
         sigmas: torch.Tensor,
         step_index: int,
     ) -> tuple[DenoisedLatentResult | None, DenoisedLatentResult | None]:
+        if step_index == 0:
+            self._recorder.emit(
+                "denoising_preflight",
+                chunk_index=self._chunk_index,
+                execution=execution_snapshot(),
+                video_latent=tensor_snapshot(video_state.latent) if video_state is not None else None,
+                audio_latent=tensor_snapshot(audio_state.latent) if audio_state is not None else None,
+                sigmas=tensor_snapshot(sigmas),
+                **self._recorder.hardware_snapshot(),
+            )
         if not self._enabled:
             return self._denoiser(transformer, video_state, audio_state, sigmas, step_index)
 

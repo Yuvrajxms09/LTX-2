@@ -7,6 +7,7 @@ import platform
 import sys
 import tempfile
 import time
+import traceback
 from collections.abc import Iterator
 from contextlib import AbstractContextManager
 from dataclasses import asdict
@@ -22,7 +23,7 @@ from ltx_core.model.transformer import X0Model
 from ltx_core.types import Audio
 from ltx_pipelines.avatar.config import AvatarConfig, load_avatar_config
 from ltx_pipelines.avatar.media import FrameWindow, continuity_metrics, save_tail_frames, stereo_audio_window
-from ltx_pipelines.avatar.metrics import MetricsRecorder
+from ltx_pipelines.avatar.metrics import MetricsRecorder, execution_snapshot
 from ltx_pipelines.avatar.pipeline import AvatarA2VidPipeline, AvatarPromptContext
 from ltx_pipelines.avatar.planning import AvatarChunk, plan_avatar_chunks
 from ltx_pipelines.utils.args import ImageConditioningInput
@@ -31,6 +32,16 @@ from ltx_pipelines.utils.quantization_factory import QuantizationKind
 from ltx_pipelines.utils.types import OffloadMode
 
 logger = logging.getLogger(__name__)
+
+
+def _require_inference_runtime() -> None:
+    state = execution_snapshot()
+    if state["grad_enabled"] or not state["inference_mode_enabled"]:
+        raise RuntimeError(
+            "Avatar inference must run inside torch.inference_mode(); "
+            f"grad_enabled={state['grad_enabled']}, "
+            f"inference_mode_enabled={state['inference_mode_enabled']}"
+        )
 
 
 def probe_audio_duration(path: str) -> float:
@@ -345,7 +356,9 @@ def _run_chunks(
             recorder.emit("chunk_completed", **chunk_record, **recorder.hardware_snapshot())
 
 
+@torch.inference_mode()
 def run_avatar(config: AvatarConfig) -> Path:
+    _require_inference_runtime()
     output_dir = Path(config.output.directory)
     if output_dir.exists() and any(output_dir.iterdir()) and not config.output.allow_existing:
         raise FileExistsError(
@@ -357,7 +370,13 @@ def run_avatar(config: AvatarConfig) -> Path:
     device = _device()
     recorder = MetricsRecorder(metrics_path, device=device, synchronize_cuda=config.diagnostics.synchronize_cuda)
     runtime = _runtime_metadata(device)
-    recorder.emit("run_started", config=asdict(config), runtime=runtime, **recorder.hardware_snapshot())
+    recorder.emit(
+        "run_started",
+        config=asdict(config),
+        runtime=runtime,
+        execution=execution_snapshot(),
+        **recorder.hardware_snapshot(),
+    )
     run_started = time.perf_counter()
     manifest: dict[str, Any] = {
         "status": "initializing",
@@ -418,11 +437,23 @@ def run_avatar(config: AvatarConfig) -> Path:
         recorder.emit("run_completed", **manifest, **recorder.hardware_snapshot())
         return manifest_path
     except Exception as error:
+        formatted_traceback = traceback.format_exc()
         manifest["status"] = "failed"
-        manifest["error"] = {"type": type(error).__name__, "message": str(error)}
+        manifest["error"] = {
+            "type": type(error).__name__,
+            "message": str(error),
+            "traceback": formatted_traceback,
+        }
         manifest["wall_seconds"] = time.perf_counter() - run_started
         _write_json(manifest_path, manifest)
-        recorder.emit("run_failed", error_type=type(error).__name__, error=str(error), **recorder.hardware_snapshot())
+        recorder.emit(
+            "run_failed",
+            error_type=type(error).__name__,
+            error=str(error),
+            traceback=formatted_traceback,
+            execution=execution_snapshot(),
+            **recorder.hardware_snapshot(),
+        )
         raise
     finally:
         if temporary_context is not None:
