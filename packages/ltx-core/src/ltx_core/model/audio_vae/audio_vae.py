@@ -18,6 +18,28 @@ from ltx_core.types import Audio, AudioLatentShape
 LATENT_DOWNSAMPLE_FACTOR = 4
 
 
+def _match_audio_channels(audio: Audio, target_channels: int) -> Audio:
+    waveform = audio.waveform
+    if waveform.ndim != 3:
+        raise ValueError(
+            "Audio VAE input must have shape (batch, channels, samples); "
+            f"got {tuple(waveform.shape)}"
+        )
+
+    source_channels = waveform.shape[1]
+    if source_channels == target_channels:
+        return audio
+    if source_channels == 1:
+        return Audio(
+            waveform=waveform.repeat(1, target_channels, 1),
+            sampling_rate=audio.sampling_rate,
+        )
+    raise ValueError(
+        f"Audio VAE expects {target_channels} channel(s), but input has {source_channels}; "
+        "only mono input can be expanded automatically"
+    )
+
+
 def build_mid_block(
     channels: int,
     temb_channels: int,
@@ -267,6 +289,7 @@ def encode_audio(
             n_fft=audio_encoder.n_fft,
         ).to(device=device)
 
+    audio = _match_audio_channels(audio, audio_encoder.in_channels)
     mel_spectrogram = audio_processor.waveform_to_mel(audio.to(device=device))
 
     latent = audio_encoder(mel_spectrogram.to(dtype=dtype))

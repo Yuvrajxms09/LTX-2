@@ -14,6 +14,8 @@ It uses a distilled one-stage denoising pass at the requested output resolution:
 
 This is chunked inference, not causal token streaming. A chunk becomes playable
 only after that chunk's denoising, VAE decode, and encoding complete.
+Mono TTS input is duplicated to stereo at the audio-VAE boundary, matching the
+two-channel checkpoint contract without changing the waveform content.
 
 ## Configuration
 

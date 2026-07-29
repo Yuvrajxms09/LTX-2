@@ -165,7 +165,8 @@ print("image source:", image_name)
 print("audio source:", audio_name)
 ```
 
-Use a WAV input for the first test to avoid codec-seeking ambiguity.
+Use a WAV input for the first test to avoid codec-seeking ambiguity. Mono TTS
+audio is accepted and duplicated to stereo automatically for the LTX audio VAE.
 
 ## 7. Create a two-chunk correctness configuration
 
