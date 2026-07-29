@@ -41,6 +41,8 @@ See [Installation & Usage](docs/installation.md) for full setup, CLI modules, an
 | [Conditioning Types](docs/conditioning.md) | Image and video conditioning methods |
 | [Multimodal Guidance](docs/multimodal-guidance.md) | CFG / STG / modality guidance parameters and tuning |
 | [Optimization Tips](docs/optimization.md) | FP8 quantization, `torch.compile`, gradient estimation |
+| [Chunked Avatar Prototype](docs/avatar.md) | External-audio avatar chunks, overlap conditioning, configuration, and diagnostics |
+| [Avatar Colab Setup](docs/avatar-colab.md) | High-memory Colab/server setup, exact weights, smoke run, and optimized run |
 | [Multi-GPU Inference](docs/multigpu/README.md) | Run a single generation across GPUs for latency (SP, TDP, distributed VAE, distributed Gemma) |
 
 ## 🔗 Related Projects

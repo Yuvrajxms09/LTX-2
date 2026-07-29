@@ -1,0 +1,54 @@
+[model]
+checkpoint_path = "/models/ltx-2.3/ltx-2.3-22b-distilled-1.1.safetensors"
+gemma_root = "/models/gemma-3-12b"
+
+# The official monolithic distilled checkpoint is BF16. Use fp8-cast for it;
+# fp8-scaled-mm requires a checkpoint containing native FP8 scale tensors.
+quantization = "fp8-cast"
+warm_transformer = true
+compile = { mode = "reduce-overhead", fullgraph = false, dynamic = true }
+
+# Add [[model.loras]] entries only for LoRAs verified against the official
+# LTX-2.3 loader. Daydream's talkvid ID-LoRA is not needed for driving TTS and
+# uses reference-audio conditioning that this avatar pipeline does not provide.
+
+[input]
+image_path = "/inputs/avatar.png"
+audio_path = "/inputs/tts.wav"
+prompt = "A stable, front-facing conversational avatar speaking naturally to the camera."
+enhance_prompt = false
+
+[generation]
+width = 512
+height = 512
+frame_rate = 25.0
+
+# Every model call generates 49 frames. After the first call, 9 frames are
+# conditioned from the previous tail and removed from emitted playback.
+generation_frames = 49
+overlap_frames = 9
+reference_strength = 1.0
+overlap_strength = 1.0
+
+seed = 10
+seed_stride = 1
+sigmas = [1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0]
+
+# Set during short experiments to stop before the complete TTS clip.
+# max_chunks = 2
+
+[output]
+directory = "/outputs/ltx-avatar-run"
+crf = 19
+preset = "veryfast"
+save_conditioning_frames = true
+allow_existing = false
+
+[diagnostics]
+log_level = "INFO"
+jsonl_metrics = true
+synchronize_cuda = true
+log_denoising_steps = true
+
+# Expensive tensor reductions useful for numerical-instability investigations.
+tensor_statistics = false
