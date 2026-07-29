@@ -6,11 +6,16 @@ repository alone will not include this experimental package until it is merged.
 
 Recommended capacity:
 
-- 80–96 GB GPU VRAM for the BF16 checkpoint and warm transformer.
+- An A100 80 GB or a GPU with more VRAM for the BF16 checkpoint and warm
+  transformer.
 - 80 GB or more system RAM for model loading.
 - At least 120 GB free disk space.
 
 Standard free Colab T4/L4 runtimes are not suitable for this 22B workflow.
+
+An A100 supports BF16 well but does not have Hopper's native FP8 tensor cores.
+It should run this prototype, but it should not be expected to reproduce
+Daydream's H100 timing.
 
 ## 1. Inspect the runtime
 
@@ -61,11 +66,10 @@ than being resolved to untested newer versions:
 ```
 
 Install the repository's optional compiled CUDA kernels separately so a build
-failure is visible. For an H100, restricting the build to compute capability
-9.0 substantially reduces compilation time:
+failure is visible. An A100 has compute capability 8.0:
 
 ```bash
-%env TORCH_CUDA_ARCH_LIST=9.0
+%env TORCH_CUDA_ARCH_LIST=8.0
 !uv pip install --system \
     -e /content/LTX-2/packages/ltx-kernels \
     --no-deps \
@@ -94,7 +98,8 @@ The kernel build requires Linux, `nvcc`, and a CUDA toolkit compatible with the
 installed PyTorch CUDA build. Check `!nvcc --version` if that cell fails. The
 avatar baseline does not call the custom multi-GPU/blockwise kernels directly,
 but this setup installs them because it intentionally covers the complete
-repository.
+repository. The blockwise FP8 GEMM path is unsupported on Ampere/A100; installing
+the package does not make that path usable on this GPU.
 
 ## 4. Authenticate with Hugging Face
 
@@ -164,8 +169,10 @@ Use a WAV input for the first test to avoid codec-seeking ambiguity.
 
 ## 7. Create a two-chunk correctness configuration
 
-No LoRA is required for the external driving-audio baseline. On an 80–96 GB
-GPU, leave `quantization` omitted for the first BF16 correctness run.
+No LoRA is required for the external driving-audio baseline. On the A100 80 GB,
+leave `quantization` omitted for the first BF16 correctness run. Gemma is freed
+after prompt encoding before the diffusion transformer is built, so its weights
+do not remain resident beside the full warm transformer.
 
 ```toml
 %%writefile /content/LTX-2/avatar-smoke.toml
@@ -267,10 +274,16 @@ If BF16 runs out of VRAM, add:
 quantization = "fp8-cast"
 ```
 
+On an A100, `fp8-cast` stores selected transformer weights in FP8 and upcasts
+them for BF16 linear operations. It can reduce VRAM, but it is not native FP8
+matrix-multiplication acceleration and may reduce throughput. Use it only if
+the BF16 run does not fit.
+
 Do not use `fp8-scaled-mm` with the official 46.1 GB monolithic BF16
-checkpoint. That mode expects native FP8 scale tensors. Scope's separated
-transformer-only FP8 checkpoint is not a substitute because this pipeline also
-loads its text projection and audio/video VAEs from the monolithic checkpoint.
+checkpoint. That mode expects native FP8 scale tensors and appropriate FP8
+hardware. Scope's separated transformer-only FP8 checkpoint is not a substitute
+because this pipeline also loads its text projection and audio/video VAEs from
+the monolithic checkpoint.
 
 Daydream's `ltx-2.3-id-lora-talkvid-3k.safetensors` is an ID-LoRA for
 reference-speaker audio conditioning. It is not required for external TTS
