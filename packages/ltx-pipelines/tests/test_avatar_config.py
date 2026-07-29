@@ -16,6 +16,7 @@ def _write_config(tmp_path: Path) -> Path:
 checkpoint_path = "model.safetensors"
 gemma_root = "gemma"
 quantization = "fp8-scaled-mm"
+offload = "cpu"
 compile = { mode = "reduce-overhead", dynamic = true }
 
 [[model.loras]]
@@ -44,6 +45,7 @@ def test_load_avatar_config_resolves_paths_and_compile_settings(tmp_path: Path) 
 
     assert config.model.checkpoint_path == str((tmp_path / "model.safetensors").resolve())
     assert config.model.loras[0].strength == 0.8
+    assert config.model.offload == "cpu"
     assert config.model.compile is not None
     assert config.model.compile.mode == "reduce-overhead"
     assert config.output.directory == str((tmp_path / "output").resolve())
@@ -70,3 +72,8 @@ def test_load_avatar_config_rejects_unknown_settings(tmp_path: Path) -> None:
 def test_load_avatar_config_rejects_invalid_model_frame_count(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match=r"8\*k \+ 1"):
         load_avatar_config(_write_config(tmp_path), overrides=("generation.generation_frames=48",))
+
+
+def test_load_avatar_config_rejects_invalid_offload_mode(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match=r"model\.offload"):
+        load_avatar_config(_write_config(tmp_path), overrides=('model.offload="gpu"',))

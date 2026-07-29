@@ -24,6 +24,7 @@ class ModelConfig:
     gemma_root: str
     loras: tuple[LoraConfig, ...] = ()
     quantization: str | None = None
+    offload: str = "none"
     compile: CompilationConfig | None = None
     warm_transformer: bool = True
 
@@ -81,6 +82,8 @@ class AvatarConfig:
         self._validate_generation()
         if self.model.quantization not in {None, "fp8-cast", "fp8-scaled-mm"}:
             raise ValueError("model.quantization must be fp8-cast, fp8-scaled-mm, or omitted")
+        if self.model.offload not in {"none", "cpu", "disk"}:
+            raise ValueError("model.offload must be none, cpu, or disk")
         if not 0 <= self.output.crf <= 51:
             raise ValueError("output.crf must be between 0 and 51")
         if self.diagnostics.log_level.upper() not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
@@ -209,7 +212,7 @@ def load_avatar_config(path: str | Path, overrides: tuple[str, ...] = ()) -> Ava
 
     _reject_unknown(
         model,
-        {"checkpoint_path", "gemma_root", "loras", "quantization", "compile", "warm_transformer"},
+        {"checkpoint_path", "gemma_root", "loras", "quantization", "offload", "compile", "warm_transformer"},
         "model",
     )
     _reject_unknown(inputs, {"image_path", "audio_path", "prompt", "enhance_prompt"}, "input")
@@ -243,6 +246,7 @@ def load_avatar_config(path: str | Path, overrides: tuple[str, ...] = ()) -> Ava
         gemma_root=_resolve_path(_required_string(model, "gemma_root", "model"), base_dir),
         loras=_parse_loras(model.get("loras"), base_dir),
         quantization=model.get("quantization"),
+        offload=str(model.get("offload", "none")),
         compile=_parse_compile(model.get("compile")),
         warm_transformer=bool(model.get("warm_transformer", True)),
     )

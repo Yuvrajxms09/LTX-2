@@ -169,16 +169,18 @@ Use a WAV input for the first test to avoid codec-seeking ambiguity.
 
 ## 7. Create a two-chunk correctness configuration
 
-No LoRA is required for the external driving-audio baseline. On the A100 80 GB,
-leave `quantization` omitted for the first BF16 correctness run. Gemma is freed
-after prompt encoding before the diffusion transformer is built, so its weights
-do not remain resident beside the full warm transformer.
+No LoRA is required for the external driving-audio baseline. The full BF16
+transformer can exceed the A100's usable 79.25 GiB once runtime tensors are
+included. For a quality-first run, keep BF16 and stream model layers from
+system RAM with `offload = "cpu"`. Gemma is freed after prompt encoding before
+the diffusion transformer is built.
 
 ```toml
 %%writefile /content/LTX-2/avatar-smoke.toml
 [model]
 checkpoint_path = "/content/LTX-2/models/ltx-2.3/ltx-2.3-22b-distilled-1.1.safetensors"
 gemma_root = "/content/LTX-2/models/gemma-3-12b"
+offload = "cpu"
 warm_transformer = true
 compile = false
 
@@ -202,7 +204,7 @@ sigmas = [1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0]
 max_chunks = 2
 
 [output]
-directory = "/content/LTX-2/outputs/avatar-smoke"
+directory = "/content/LTX-2/outputs/avatar-a100-bf16-offload"
 crf = 19
 preset = "veryfast"
 save_conditioning_frames = true
@@ -219,7 +221,7 @@ tensor_statistics = false
 ## 8. Validate and run
 
 ```bash
-%env PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+%env PYTORCH_ALLOC_CONF=expandable_segments:True
 %env TOKENIZERS_PARALLELISM=false
 
 !python -m ltx_pipelines.avatar.runner \
@@ -239,7 +241,7 @@ import json
 from pathlib import Path
 from IPython.display import Video, display
 
-run_dir = Path("/content/LTX-2/outputs/avatar-smoke")
+run_dir = Path("/content/LTX-2/outputs/avatar-a100-bf16-offload")
 manifest = json.loads((run_dir / "manifest.json").read_text())
 
 print(json.dumps(manifest, indent=2))
@@ -260,6 +262,7 @@ After the smoke output is correct, create a second config with:
 [model]
 checkpoint_path = "/content/LTX-2/models/ltx-2.3/ltx-2.3-22b-distilled-1.1.safetensors"
 gemma_root = "/content/LTX-2/models/gemma-3-12b"
+offload = "cpu"
 warm_transformer = true
 compile = { mode = "reduce-overhead", fullgraph = false, dynamic = true }
 ```
@@ -268,16 +271,22 @@ Use `generation_frames=49`, `overlap_frames=9`, `max_chunks=3`, and a new
 output directory such as `outputs/avatar-optimized`. The first chunk includes
 compilation cost; judge steady-state speed from chunks 1 and 2.
 
-If BF16 runs out of VRAM, add:
+CPU offload is the recommended A100 quality baseline because it keeps the
+official BF16 weights unchanged. It requires substantial system RAM and is
+much slower because transformer layers are streamed to the GPU.
+
+After validating quality, a separate memory-versus-quality experiment can
+disable offload and enable weight-only FP8 cast:
 
 ```toml
+offload = "none"
 quantization = "fp8-cast"
 ```
 
 On an A100, `fp8-cast` stores selected transformer weights in FP8 and upcasts
 them for BF16 linear operations. It can reduce VRAM, but it is not native FP8
-matrix-multiplication acceleration and may reduce throughput. Use it only if
-the BF16 run does not fit.
+matrix-multiplication acceleration and may reduce throughput. Compare its
+output directly with the CPU-offloaded BF16 baseline before adopting it.
 
 Do not use `fp8-scaled-mm` with the official 46.1 GB monolithic BF16
 checkpoint. That mode expects native FP8 scale tensors and appropriate FP8

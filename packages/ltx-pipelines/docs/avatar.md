@@ -26,7 +26,8 @@ settings intended for avatar experiments are exposed directly:
 - `frame_rate`, resolution, seed behavior, and the complete distilled sigma schedule.
 - optional, loader-compatible LoRA paths and strengths. No LoRA is required for
   the external driving-audio baseline.
-- FP8 quantization, `torch.compile`, and warm transformer reuse.
+- CPU/disk model offload, FP8 quantization, `torch.compile`, and warm
+  transformer reuse.
 - MP4 quality and diagnostic detail.
 
 For a 49-frame generation with a 9-frame overlap at 25 FPS, the first chunk
@@ -124,11 +125,13 @@ prevents metrics and chunks from different experiments being mixed. Set
 artifacts; unrelated files are never deleted.
 
 Use the official monolithic `ltx-2.3-22b-distilled-1.1.safetensors`
-checkpoint with `fp8-cast`. The separated transformer-only FP8 checkpoint used
-by Scope does not contain the text projection and audio/video VAE weights this
-pipeline loads from the checkpoint. Daydream's `talkvid-3k` ID-LoRA is for
-reference-speaker audio conditioning and is not required for external TTS
-driving mode.
+checkpoint. When BF16 does not fit in VRAM, set `model.offload = "cpu"` to
+stream layers from system RAM without quantizing weights. Use `fp8-cast` only
+when reducing model memory is more important than preserving the BF16 baseline.
+The separated transformer-only FP8 checkpoint used by Scope does not contain
+the text projection and audio/video VAE weights this pipeline loads from the
+checkpoint. Daydream's `talkvid-3k` ID-LoRA is for reference-speaker audio
+conditioning and is not required for external TTS driving mode.
 
 If overlap conditioning is visually stable but slower than real time, reduce
 `generation_frames`, benchmark compilation and FP8 independently, and separate

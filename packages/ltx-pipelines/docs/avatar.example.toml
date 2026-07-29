@@ -2,11 +2,17 @@
 checkpoint_path = "/models/ltx-2.3/ltx-2.3-22b-distilled-1.1.safetensors"
 gemma_root = "/models/gemma-3-12b"
 
+# Use "cpu" to preserve BF16 quality when the transformer does not fit in VRAM.
+# Use "none" when the complete transformer fits. "disk" is the slowest,
+# lowest-system-memory fallback.
+offload = "cpu"
+
 # The official monolithic distilled checkpoint is BF16. Use fp8-cast for it;
 # fp8-scaled-mm requires a checkpoint containing native FP8 scale tensors.
-quantization = "fp8-cast"
+# quantization = "fp8-cast"
 warm_transformer = true
-compile = { mode = "reduce-overhead", fullgraph = false, dynamic = true }
+# Benchmark torch.compile separately after validating output quality.
+compile = false
 
 # Add [[model.loras]] entries only for LoRAs verified against the official
 # LTX-2.3 loader. Daydream's talkvid ID-LoRA is not needed for driving TTS and

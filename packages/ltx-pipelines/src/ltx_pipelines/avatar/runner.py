@@ -28,6 +28,7 @@ from ltx_pipelines.avatar.planning import AvatarChunk, plan_avatar_chunks
 from ltx_pipelines.utils.args import ImageConditioningInput
 from ltx_pipelines.utils.media_io import encode_video
 from ltx_pipelines.utils.quantization_factory import QuantizationKind
+from ltx_pipelines.utils.types import OffloadMode
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +153,7 @@ def _build_pipeline(config: AvatarConfig, recorder: MetricsRecorder) -> AvatarA2
             loras=loras,
             quantization=quantization,
             compilation_config=config.model.compile,
+            offload_mode=OffloadMode(config.model.offload),
         )
 
 
