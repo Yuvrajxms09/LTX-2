@@ -13,11 +13,15 @@ from ltx_pipelines.avatar.config import (
 from ltx_pipelines.avatar.metrics import execution_snapshot, tensor_snapshot
 from ltx_pipelines.avatar.planning import AvatarChunk
 from ltx_pipelines.avatar.runner import (
+    _chunk_prompts,
+    _conditioning_inputs,
     _continuation_tail,
     _encode_identity_anchor,
+    _encode_prompt_contexts,
     _latent_prefix_for_chunk,
     _require_inference_runtime,
 )
+from ltx_pipelines.utils.args import ImageConditioningInput
 
 
 def test_require_inference_runtime_rejects_autograd_execution() -> None:
@@ -85,6 +89,97 @@ def test_latent_prefix_for_chunk_reuses_exact_tail() -> None:
     prefix = _latent_prefix_for_chunk(config, chunk, tail)
 
     assert prefix is tail
+
+
+def test_reference_reset_conditions_every_chunk_on_original_portrait() -> None:
+    config = AvatarConfig(
+        model=ModelConfig(checkpoint_path="model", gemma_root="gemma"),
+        input=InputConfig(image_path="image", audio_path="audio", prompt="prompt"),
+        generation=GenerationConfig(
+            generation_frames=121,
+            overlap_frames=0,
+            continuation_mode="reference-reset",
+        ),
+        output=OutputConfig(directory="output"),
+    )
+    chunk = AvatarChunk(
+        index=1,
+        generation_start_frame=121,
+        generation_frames=121,
+        overlap_frames=0,
+        emitted_start_frame=121,
+        emitted_frames=121,
+        frame_rate=25.0,
+    )
+
+    images = _conditioning_inputs(config, chunk, previous_tail=[])
+
+    assert images == [ImageConditioningInput(path="image", frame_idx=0, strength=1.0)]
+
+
+def test_chunk_prompts_require_exact_plan_length() -> None:
+    config = AvatarConfig(
+        model=ModelConfig(checkpoint_path="model", gemma_root="gemma"),
+        input=InputConfig(
+            image_path="image",
+            audio_path="audio",
+            prompt="fallback",
+            chunk_prompts=("first",),
+        ),
+        generation=GenerationConfig(),
+        output=OutputConfig(directory="output"),
+    )
+    chunks = [
+        AvatarChunk(0, 0, 49, 0, 0, 49, 25.0),
+        AvatarChunk(1, 40, 49, 9, 49, 40, 25.0),
+    ]
+
+    with pytest.raises(ValueError, match="plans 2 chunks"):
+        _chunk_prompts(config, chunks)
+
+
+def test_chunk_prompts_repeat_fallback_prompt() -> None:
+    config = AvatarConfig(
+        model=ModelConfig(checkpoint_path="model", gemma_root="gemma"),
+        input=InputConfig(image_path="image", audio_path="audio", prompt="fallback"),
+        generation=GenerationConfig(),
+        output=OutputConfig(directory="output"),
+    )
+    chunks = [
+        AvatarChunk(0, 0, 49, 0, 0, 49, 25.0),
+        AvatarChunk(1, 40, 49, 9, 49, 40, 25.0),
+    ]
+
+    assert _chunk_prompts(config, chunks) == ("fallback", "fallback")
+
+
+def test_prompt_contexts_batch_unique_prompts_and_restore_chunk_order() -> None:
+    config = AvatarConfig(
+        model=ModelConfig(checkpoint_path="model", gemma_root="gemma"),
+        input=InputConfig(image_path="image", audio_path="audio", prompt="fallback"),
+        generation=GenerationConfig(seed=10),
+        output=OutputConfig(directory="output"),
+    )
+    first_context = object()
+    second_context = object()
+    pipeline = Mock()
+    pipeline.encode_prompts.return_value = (first_context, second_context)
+    recorder = MagicMock()
+
+    contexts = _encode_prompt_contexts(
+        pipeline,
+        config,
+        ("first", "second", "first"),
+        recorder,
+    )
+
+    assert contexts == (first_context, second_context, first_context)
+    pipeline.encode_prompts.assert_called_once_with(
+        prompts=("first", "second"),
+        enhance_prompt=False,
+        image_path="image",
+        seed=10,
+    )
 
 
 def test_identity_anchor_is_cached_at_negative_temporal_index() -> None:

@@ -6,10 +6,11 @@ image and external TTS audio. Existing LTX pipelines and CLIs are unchanged.
 
 It uses a distilled one-stage denoising pass at the requested output resolution:
 
-1. Encode the prompt once for the complete session.
+1. Encode one prompt per chunk, reusing cached context when prompts are identical.
 2. Encode the relevant external-audio window for each chunk and keep its latent frozen.
 3. Generate the first chunk from the reference image.
-4. Generate following chunks from either the previous decoded tail or an exact clean latent prefix.
+4. Generate following chunks from the original portrait, the previous decoded
+   tail, or an exact clean latent prefix.
 5. In latent-prefix mode, discard the causally reinterpreted first extension latent and
    fuse the remaining latent overlap into one persistent timeline.
 6. Decode that timeline once into the authoritative combined output. Independently
@@ -28,9 +29,17 @@ settings intended for avatar experiments are exposed directly:
 - `generation_frames`: frames computed by every model invocation; must be `8*k+1`.
 - `overlap_frames`: prior tail frames conditioned into the next invocation.
 - `continuation_mode`:
+  - `reference-reset` conditions every independent chunk on the original portrait
+    at frame zero. It requires `overlap_frames = 0` and is the Scope-style reset
+    baseline, not temporal continuation.
   - `image-keyframes` preserves the original decoded-tail experiment.
   - `latent-prefix` carries the previous denoised latent tail directly and bypasses
     PNG serialization and video-VAE re-encoding between chunks.
+- `input.chunk_prompts`: optional exact per-chunk prompts. Its length must equal
+  the planned chunk count. Use it with transcript-sensitive talking-head LoRAs;
+  otherwise the runner reuses `input.prompt` for every chunk. Distinct chunk
+  prompts are batch-encoded in one Gemma lifecycle and require
+  `enhance_prompt = false`.
 - `reference_strength` and `overlap_strength`: first-frame and temporal-prefix strengths.
 - `identity_anchor_strength`: when greater than zero in `latent-prefix` mode,
   encodes the original portrait once and appends it to every continuation chunk
@@ -38,8 +47,11 @@ settings intended for avatar experiments are exposed directly:
   reference is outside the generated timeline and is intended to reduce identity
   drift. Start with `0.25` or `0.5`; `0` disables it.
 - `frame_rate`, resolution, seed behavior, and the complete distilled sigma schedule.
-- optional, loader-compatible LoRA paths and strengths. No LoRA is required for
-  the external driving-audio baseline.
+- optional, loader-compatible LoRA paths and strengths. The community
+  `elix3r/LTX-2.3-22b-AV-LoRA-talking-head` adapter uses trigger word
+  `OHWXPERSON`, expects the chunk transcript in the prompt, and is
+  character-specific. It is an experiment, not a general arbitrary-portrait
+  talking-head guarantee.
 - CPU/disk model offload, FP8 quantization, `torch.compile`, and warm
   transformer reuse.
 - MP4 quality and diagnostic detail.
@@ -95,6 +107,9 @@ The output directory contains:
 - `chunk_0000.mp4`, `chunk_0001.mp4`, ...: independently playable emitted chunks.
 - `combined.mp4`: in `latent-prefix` mode, one decode of the fused canonical
   latent timeline. Use this file for visual quality and seam assessment.
+- `reference-reset` and `image-keyframes` deliberately leave chunks separate;
+  concatenate them for playback comparison without treating that assembly as a
+  model-native continuous timeline.
 - `conditioning/`: decoded tail frames used by `image-keyframes` mode.
 - `manifest.json`: chunk plan, progress, output paths, wall throughput, and real-time factor.
 - `metrics.jsonl`: machine-readable phase, denoising-step, memory, and run events.

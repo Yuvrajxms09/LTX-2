@@ -14,14 +14,24 @@ warm_transformer = true
 # Benchmark torch.compile separately after validating output quality.
 compile = false
 
-# Add [[model.loras]] entries only for LoRAs verified against the official
-# LTX-2.3 loader. Daydream's talkvid ID-LoRA is not needed for driving TTS and
-# uses reference-audio conditioning that this avatar pipeline does not provide.
+# Optional community talking-head experiment:
+# [[model.loras]]
+# path = "/models/loras/LTX-2.3-22b-AV-LoRA-talking-head-v1.safetensors"
+# strength = 1.0
+#
+# This LoRA is character-specific. It uses the OHWXPERSON trigger and expects
+# the spoken transcript in each prompt; it is distinct from the talkvid ID-LoRA.
 
 [input]
 image_path = "/inputs/avatar.png"
 audio_path = "/inputs/tts.wav"
 prompt = "A stable, front-facing conversational avatar speaking naturally to the camera."
+# Optional transcript-aligned prompts. The number of entries must equal the
+# planned chunk count.
+# chunk_prompts = [
+#   'OHWXPERSON, a front-facing portrait. The person is talking, and he says: "First audio window."',
+#   'OHWXPERSON, a front-facing portrait. The person is talking, and he says: "Second audio window."',
+# ]
 enhance_prompt = false
 
 [generation]
@@ -36,6 +46,9 @@ frame_rate = 25.0
 generation_frames = 121
 overlap_frames = 17
 continuation_mode = "latent-prefix"
+# Use "reference-reset" with overlap_frames = 0 for independent original-
+# portrait chunks, or "image-keyframes" with overlap_frames = 1 for last-frame
+# I2V chaining.
 reference_strength = 1.0
 overlap_strength = 1.0
 # Optional model-native keyframe at temporal index -1 on continuation chunks.

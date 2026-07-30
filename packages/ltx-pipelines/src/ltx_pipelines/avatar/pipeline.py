@@ -151,13 +151,27 @@ class AvatarA2VidPipeline:
         image_path: str,
         seed: int,
     ) -> AvatarPromptContext:
-        (encoded,) = self.prompt_encoder(
-            [prompt],
+        return self.encode_prompts(
+            prompts=(prompt,),
+            enhance_prompt=enhance_prompt,
+            image_path=image_path,
+            seed=seed,
+        )[0]
+
+    def encode_prompts(
+        self,
+        prompts: tuple[str, ...],
+        enhance_prompt: bool,
+        image_path: str,
+        seed: int,
+    ) -> tuple[AvatarPromptContext, ...]:
+        encoded = self.prompt_encoder(
+            list(prompts),
             enhance_first_prompt=enhance_prompt,
             enhance_prompt_image=image_path,
             enhance_prompt_seed=seed,
         )
-        return self._prompt_context(encoded)
+        return tuple(self._prompt_context(item) for item in encoded)
 
     def encode_image_conditionings(
         self,

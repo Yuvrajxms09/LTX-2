@@ -1,7 +1,17 @@
 # Colab Setup for the Chunked Avatar Prototype
 
 The runnable notebook is [`ltx-avatar-colab.ipynb`](ltx-avatar-colab.ipynb).
-This document provides the same flow as a reference and troubleshooting guide.
+It is the canonical three-way talking-head LoRA experiment: original-portrait
+reset, one-frame last-frame I2V, and four-latent exact continuation. This
+document retains the no-LoRA baseline as a reference and troubleshooting guide.
+
+The notebook downloads
+`elix3r/LTX-2.3-22b-AV-LoRA-talking-head`, transcribes the driving audio, and
+passes an audio-window-aligned `input.chunk_prompts` list to each run. The LoRA
+is character-specific, uses the `OHWXPERSON` trigger, and was trained around
+1280x704 at 25 FPS for image+audio inference. Testing it at 512x512 with an
+arbitrary portrait isolates continuation behavior but does not establish
+general-purpose portrait support.
 
 This notebook flow expects a high-memory CUDA runtime and a repository branch
 that already contains `ltx_pipelines.avatar`. Cloning the upstream Lightricks
@@ -40,6 +50,9 @@ Daydream's H100 timing.
 ```
 
 The identity-anchor implementation is present at commit `a958656` or later.
+The three-way runner additionally requires a revision containing
+`generation.continuation_mode = "reference-reset"` and `input.chunk_prompts`;
+using the notebook's update cell checks out the required branch head.
 
 ## 3. Install the complete repository environment
 

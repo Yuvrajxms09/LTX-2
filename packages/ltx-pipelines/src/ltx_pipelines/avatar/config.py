@@ -35,6 +35,7 @@ class InputConfig:
     image_path: str
     audio_path: str
     prompt: str
+    chunk_prompts: tuple[str, ...] = ()
     enhance_prompt: bool = False
 
 
@@ -108,10 +109,7 @@ class AvatarConfig:
             raise ValueError("generation.overlap_frames must be in [0, generation_frames)")
         if generation.overlap_frames >= generation.generation_frames - 1:
             raise ValueError("generation.overlap_frames must leave at least two newly generated frames")
-        if generation.continuation_mode not in {"image-keyframes", "latent-prefix"}:
-            raise ValueError("generation.continuation_mode must be image-keyframes or latent-prefix")
-        if generation.continuation_mode == "latent-prefix":
-            self._validate_latent_prefix()
+        self._validate_continuation_mode()
         if generation.reference_strength < 0 or generation.overlap_strength < 0:
             raise ValueError("conditioning strengths must be non-negative")
         self._validate_identity_anchor()
@@ -120,6 +118,19 @@ class AvatarConfig:
         if generation.max_chunks is not None and generation.max_chunks < 1:
             raise ValueError("generation.max_chunks must be at least 1")
         self._validate_sigma_schedule()
+
+    def _validate_continuation_mode(self) -> None:
+        generation = self.generation
+        if generation.continuation_mode not in {
+            "image-keyframes",
+            "latent-prefix",
+            "reference-reset",
+        }:
+            raise ValueError("generation.continuation_mode must be image-keyframes, latent-prefix, or reference-reset")
+        if generation.continuation_mode == "latent-prefix":
+            self._validate_latent_prefix()
+        if generation.continuation_mode == "reference-reset" and generation.overlap_frames != 0:
+            raise ValueError("generation.overlap_frames must be 0 in reference-reset mode")
 
     def _validate_sigma_schedule(self) -> None:
         sigmas = self.generation.sigmas
@@ -203,6 +214,19 @@ def _parse_loras(value: object, base_dir: Path) -> tuple[LoraConfig, ...]:
     return tuple(result)
 
 
+def _parse_chunk_prompts(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ValueError("input.chunk_prompts must be an array of strings")
+    prompts = []
+    for index, prompt in enumerate(value):
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError(f"input.chunk_prompts[{index}] must be a non-empty string")
+        prompts.append(prompt)
+    return tuple(prompts)
+
+
 def _parse_toml_value(raw: str) -> object:
     try:
         return tomllib.loads(f"value = {raw}")["value"]
@@ -245,7 +269,11 @@ def load_avatar_config(path: str | Path, overrides: tuple[str, ...] = ()) -> Ava
         {"checkpoint_path", "gemma_root", "loras", "quantization", "offload", "compile", "warm_transformer"},
         "model",
     )
-    _reject_unknown(inputs, {"image_path", "audio_path", "prompt", "enhance_prompt"}, "input")
+    _reject_unknown(
+        inputs,
+        {"image_path", "audio_path", "prompt", "chunk_prompts", "enhance_prompt"},
+        "input",
+    )
     _reject_unknown(
         generation,
         {
@@ -286,6 +314,7 @@ def load_avatar_config(path: str | Path, overrides: tuple[str, ...] = ()) -> Ava
         image_path=_resolve_path(_required_string(inputs, "image_path", "input"), base_dir),
         audio_path=_resolve_path(_required_string(inputs, "audio_path", "input"), base_dir),
         prompt=_required_string(inputs, "prompt", "input"),
+        chunk_prompts=_parse_chunk_prompts(inputs.get("chunk_prompts")),
         enhance_prompt=bool(inputs.get("enhance_prompt", False)),
     )
     generation_values = dict(generation)

@@ -27,6 +27,7 @@ strength = 0.8
 image_path = "avatar.png"
 audio_path = "speech.wav"
 prompt = "A speaking avatar"
+chunk_prompts = ["First window", "Second window"]
 
 [generation]
 generation_frames = 49
@@ -48,6 +49,7 @@ def test_load_avatar_config_resolves_paths_and_compile_settings(tmp_path: Path) 
     assert config.model.offload == "cpu"
     assert config.model.compile is not None
     assert config.model.compile.mode == "reduce-overhead"
+    assert config.input.chunk_prompts == ("First window", "Second window")
     assert config.output.directory == str((tmp_path / "output").resolve())
 
 
@@ -73,6 +75,27 @@ def test_load_avatar_config_accepts_exact_latent_prefix_mode(tmp_path: Path) -> 
 
     assert config.generation.continuation_mode == "latent-prefix"
     assert config.generation.overlap_frames == 17
+
+
+def test_load_avatar_config_accepts_reference_reset_without_overlap(tmp_path: Path) -> None:
+    config = load_avatar_config(
+        _write_config(tmp_path),
+        overrides=(
+            'generation.continuation_mode="reference-reset"',
+            "generation.overlap_frames=0",
+        ),
+    )
+
+    assert config.generation.continuation_mode == "reference-reset"
+    assert config.generation.overlap_frames == 0
+
+
+def test_load_avatar_config_rejects_reference_reset_overlap(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="must be 0"):
+        load_avatar_config(
+            _write_config(tmp_path),
+            overrides=('generation.continuation_mode="reference-reset"',),
+        )
 
 
 def test_load_avatar_config_rejects_non_aligned_latent_prefix(tmp_path: Path) -> None:

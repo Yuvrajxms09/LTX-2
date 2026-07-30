@@ -75,7 +75,7 @@ def _conditioning_inputs(
     chunk: AvatarChunk,
     previous_tail: list[str],
 ) -> list[ImageConditioningInput]:
-    if chunk.index == 0:
+    if chunk.index == 0 or config.generation.continuation_mode == "reference-reset":
         return [
             ImageConditioningInput(
                 path=config.input.image_path,
@@ -99,6 +99,35 @@ def _conditioning_inputs(
         )
         for frame_index, path in enumerate(selected)
     ]
+
+
+def _chunk_prompts(config: AvatarConfig, chunks: list[AvatarChunk]) -> tuple[str, ...]:
+    configured = config.input.chunk_prompts
+    if not configured:
+        return (config.input.prompt,) * len(chunks)
+    if len(configured) != len(chunks):
+        raise ValueError(f"input.chunk_prompts has {len(configured)} entries, but the run plans {len(chunks)} chunks")
+    return configured
+
+
+def _encode_prompt_contexts(
+    pipeline: AvatarA2VidPipeline,
+    config: AvatarConfig,
+    prompts: tuple[str, ...],
+    recorder: MetricsRecorder,
+) -> tuple[AvatarPromptContext, ...]:
+    unique_prompts = tuple(dict.fromkeys(prompts))
+    if config.input.enhance_prompt and len(unique_prompts) > 1:
+        raise ValueError("input.enhance_prompt cannot be combined with multiple distinct chunk prompts")
+    with recorder.phase("prompt_encoding", prompt_count=len(unique_prompts)):
+        encoded = pipeline.encode_prompts(
+            prompts=unique_prompts,
+            enhance_prompt=config.input.enhance_prompt,
+            image_path=config.input.image_path,
+            seed=config.generation.seed,
+        )
+    contexts_by_prompt = dict(zip(unique_prompts, encoded, strict=True))
+    return tuple(contexts_by_prompt[prompt] for prompt in prompts)
 
 
 def _latent_prefix_for_chunk(
@@ -415,9 +444,10 @@ def _encode_combined_latent_output(
     }
 
 
-def _run_chunks(  # noqa: PLR0913
+def _run_chunks(  # noqa: PLR0913, PLR0915
     pipeline: AvatarA2VidPipeline,
-    context: AvatarPromptContext,
+    contexts: tuple[AvatarPromptContext, ...],
+    prompts: tuple[str, ...],
     config: AvatarConfig,
     chunks: list[AvatarChunk],
     output_dir: Path,
@@ -428,6 +458,8 @@ def _run_chunks(  # noqa: PLR0913
     run_started: float,
     identity_conditionings: list[ConditioningItem],
 ) -> None:
+    if len(contexts) != len(chunks) or len(prompts) != len(chunks):
+        raise ValueError("Every planned chunk requires exactly one prompt context")
     previous_tail: list[str] = []
     previous_tail_tensors: tuple[torch.Tensor, ...] = ()
     previous_latent_tail: torch.Tensor | None = None
@@ -457,7 +489,7 @@ def _run_chunks(  # noqa: PLR0913
             result = _generate_chunk(
                 pipeline,
                 warm_transformer,
-                context,
+                contexts[chunk.index],
                 config,
                 chunk,
                 images,
@@ -539,6 +571,7 @@ def _run_chunks(  # noqa: PLR0913
                 "meets_realtime_deadline": elapsed <= deadline_seconds,
                 "phase_seconds": phase_seconds,
                 "continuation_mode": config.generation.continuation_mode,
+                "prompt": prompts[chunk.index],
                 "conditioning_images": [image.path for image in images],
                 "identity_anchor_enabled": bool(identity_conditionings),
                 "continuity": continuity,
@@ -610,22 +643,18 @@ def run_avatar(config: AvatarConfig) -> Path:
             max_chunks=config.generation.max_chunks,
             align_total_frames=config.generation.continuation_mode == "latent-prefix",
         )
+        prompts = _chunk_prompts(config, chunks)
         manifest.update(
             {
                 "status": "running",
                 "audio_duration_seconds": duration,
                 "planned_chunks": [asdict(chunk) for chunk in chunks],
+                "chunk_prompts": list(prompts),
             }
         )
         _write_json(manifest_path, manifest)
         pipeline = _build_pipeline(config, recorder)
-        with recorder.phase("prompt_encoding"):
-            context = pipeline.encode_prompt(
-                prompt=config.input.prompt,
-                enhance_prompt=config.input.enhance_prompt,
-                image_path=config.input.image_path,
-                seed=config.generation.seed,
-            )
+        contexts = _encode_prompt_contexts(pipeline, config, prompts, recorder)
         identity_conditionings = _encode_identity_anchor(pipeline, config, recorder)
         temporary_context = (
             None
@@ -635,7 +664,8 @@ def run_avatar(config: AvatarConfig) -> Path:
         conditioning_dir = output_dir / "conditioning" if temporary_context is None else Path(temporary_context.name)
         _run_chunks(
             pipeline,
-            context,
+            contexts,
+            prompts,
             config,
             chunks,
             output_dir,
@@ -686,12 +716,14 @@ def _dry_run(config: AvatarConfig) -> None:
         max_chunks=config.generation.max_chunks,
         align_total_frames=config.generation.continuation_mode == "latent-prefix",
     )
+    prompts = _chunk_prompts(config, chunks)
     sys.stdout.write(
         json.dumps(
             {
                 "audio_duration_seconds": duration,
                 "config": asdict(config),
                 "chunks": [asdict(chunk) for chunk in chunks],
+                "chunk_prompts": list(prompts),
             },
             indent=2,
             sort_keys=True,
