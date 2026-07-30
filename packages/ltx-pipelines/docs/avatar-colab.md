@@ -1,5 +1,8 @@
 # Colab Setup for the Chunked Avatar Prototype
 
+The runnable notebook is [`ltx-avatar-colab.ipynb`](ltx-avatar-colab.ipynb).
+This document provides the same flow as a reference and troubleshooting guide.
+
 This notebook flow expects a high-memory CUDA runtime and a repository branch
 that already contains `ltx_pipelines.avatar`. Cloning the upstream Lightricks
 repository alone will not include this experimental package until it is merged.
@@ -27,14 +30,16 @@ Daydream's H100 timing.
 
 ## 2. Clone the branch containing the avatar runner
 
-Replace the URL and branch with the fork/branch containing this implementation.
-
 ```bash
 !git clone --branch avatar-prototype --single-branch \
-    https://github.com/YOUR_ACCOUNT/LTX-2.git /content/LTX-2
+    https://github.com/Yuvrajxms09/LTX-2.git /content/LTX-2
 %cd /content/LTX-2
+!git pull --ff-only origin avatar-prototype
+!git rev-parse --short HEAD
 !test -f packages/ltx-pipelines/src/ltx_pipelines/avatar/runner.py
 ```
+
+The identity-anchor implementation is present at commit `a958656` or later.
 
 ## 3. Install the complete repository environment
 
