@@ -4,6 +4,12 @@ import math
 from dataclasses import dataclass
 
 
+def latent_frames_for_pixel_prefix(pixel_frames: int) -> int:
+    if pixel_frames < 1 or (pixel_frames - 1) % 8 != 0:
+        raise ValueError("pixel prefix must satisfy frames = 8*k + 1")
+    return (pixel_frames - 1) // 8 + 1
+
+
 @dataclass(frozen=True)
 class AvatarChunk:
     index: int

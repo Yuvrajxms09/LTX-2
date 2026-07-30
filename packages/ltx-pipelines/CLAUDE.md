@@ -26,6 +26,7 @@ Inference pipelines for LTX-2 audio-video generation. Depends on `ltx-core` for 
 | `ICLoraPipeline` | `ic_lora.py` | 2 | Distilled only | Euler | Video-to-video with IC-LoRA control |
 | `LipDubPipeline` | `lipdub.py` | 2 | Distilled only | Euler | Lip dubbing with IC-LoRA + audio ref conditioning |
 | `RetakePipeline` | `retake.py` | 1 | Full or distilled | Euler | Video region regeneration |
+| `AvatarA2VidPipeline` | `avatar/pipeline.py` | 1 | Distilled only | Euler | Experimental chunked external-audio avatar |
 
 ## Guidance
 
@@ -82,6 +83,9 @@ Guided denoisers batch all guidance passes into a **single transformer call**: s
 - **Keyframe**: Uses `image_conditionings_by_adding_guiding_latent` in both stages (all frames as keyframe guidance, no replacement) -- unlike TI2Vid which uses `combined_image_conditionings` (frame_idx=0 replaces, others guide).
 - **Retake**: `TemporalRegionMask` for selective time-window regeneration. `regenerate_video`/`regenerate_audio` flags. Conditional distilled/full behavior.
 - **Distilled**: Single `self.stage` reused for both stages (not `stage_1`/`stage_2`).
+- **Avatar**: `generate_chunk()` accepts either image conditionings or an exact clean latent prefix and returns the
+  denoised video latent with the decoded-video iterator. The runner carries strength-1 temporal latent tails between
+  chunks while keeping external audio frozen.
 
 ## Image conditioning helpers (`utils/helpers.py`)
 

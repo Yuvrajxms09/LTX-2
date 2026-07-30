@@ -61,6 +61,43 @@ def test_load_avatar_config_applies_overrides(tmp_path: Path) -> None:
     assert config.generation.overlap_frames == 8
 
 
+def test_load_avatar_config_accepts_exact_latent_prefix_mode(tmp_path: Path) -> None:
+    config = load_avatar_config(
+        _write_config(tmp_path),
+        overrides=(
+            'generation.continuation_mode="latent-prefix"',
+            "generation.generation_frames=121",
+            "generation.overlap_frames=17",
+        ),
+    )
+
+    assert config.generation.continuation_mode == "latent-prefix"
+    assert config.generation.overlap_frames == 17
+
+
+def test_load_avatar_config_rejects_non_aligned_latent_prefix(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match=r"8\*k \+ 1"):
+        load_avatar_config(
+            _write_config(tmp_path),
+            overrides=(
+                'generation.continuation_mode="latent-prefix"',
+                "generation.overlap_frames=8",
+            ),
+        )
+
+
+def test_load_avatar_config_requires_exact_latent_prefix_strength(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match=r"overlap_strength must be 1\.0"):
+        load_avatar_config(
+            _write_config(tmp_path),
+            overrides=(
+                'generation.continuation_mode="latent-prefix"',
+                "generation.overlap_frames=17",
+                "generation.overlap_strength=0.8",
+            ),
+        )
+
+
 def test_load_avatar_config_rejects_unknown_settings(tmp_path: Path) -> None:
     path = _write_config(tmp_path)
     path.write_text(path.read_text(encoding="utf-8").replace("overlap_frames = 9", "overlap_frames = 9\novrelap = 8"))

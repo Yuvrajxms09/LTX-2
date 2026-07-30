@@ -9,7 +9,7 @@ It uses a distilled one-stage denoising pass at the requested output resolution:
 1. Encode the prompt once for the complete session.
 2. Encode the relevant external-audio window for each chunk and keep its latent frozen.
 3. Generate the first chunk from the reference image.
-4. Generate following chunks from the previous decoded tail.
+4. Generate following chunks from either the previous decoded tail or an exact clean latent prefix.
 5. Remove the repeated overlap from both video and audio before writing each playable MP4.
 
 This is chunked inference, not causal token streaming. A chunk becomes playable
@@ -24,6 +24,10 @@ settings intended for avatar experiments are exposed directly:
 
 - `generation_frames`: frames computed by every model invocation; must be `8*k+1`.
 - `overlap_frames`: prior tail frames conditioned into the next invocation.
+- `continuation_mode`:
+  - `image-keyframes` preserves the original decoded-tail experiment.
+  - `latent-prefix` carries the previous denoised latent tail directly and bypasses
+    PNG serialization and video-VAE re-encoding between chunks.
 - `reference_strength` and `overlap_strength`: image-conditioning strengths.
 - `frame_rate`, resolution, seed behavior, and the complete distilled sigma schedule.
 - optional, loader-compatible LoRA paths and strengths. No LoRA is required for
@@ -32,8 +36,12 @@ settings intended for avatar experiments are exposed directly:
   transformer reuse.
 - MP4 quality and diagnostic detail.
 
-For a 49-frame generation with a 9-frame overlap at 25 FPS, the first chunk
-emits 1.96 seconds and each following full chunk adds 1.60 seconds.
+Latent-prefix overlap must be `8*k+1` because of the causal video-VAE layout.
+Use 17 overlap frames for three temporal latents or 25 overlap frames for four.
+Exact latent-prefix continuation requires `overlap_strength = 1.0`.
+
+For a 121-frame generation with a 17-frame latent prefix at 25 FPS, the first
+chunk emits 4.84 seconds and each following full chunk adds 4.16 seconds.
 
 Validate paths and inspect the exact chunk/audio plan without loading models:
 
@@ -55,8 +63,9 @@ Override common experimental values without editing the file:
 ```bash
 python -m ltx_pipelines.avatar.runner \
     --config avatar.toml \
-    --set generation.generation_frames=33 \
-    --set generation.overlap_frames=8 \
+    --set 'generation.continuation_mode="latent-prefix"' \
+    --set generation.generation_frames=121 \
+    --set generation.overlap_frames=17 \
     --set generation.max_chunks=2
 ```
 
@@ -71,7 +80,7 @@ Values containing spaces should use TOML quoting:
 The output directory contains:
 
 - `chunk_0000.mp4`, `chunk_0001.mp4`, ...: independently playable emitted chunks.
-- `conditioning/`: exact decoded tail frames used to condition later chunks.
+- `conditioning/`: decoded tail frames used by `image-keyframes` mode.
 - `manifest.json`: chunk plan, progress, output paths, wall throughput, and real-time factor.
 - `metrics.jsonl`: machine-readable phase, denoising-step, memory, and run events.
 - `avatar.log`: human-readable execution log.
@@ -128,6 +137,11 @@ The manifest also records overlap MAE/RMSE/PSNR by comparing each regenerated
 overlap against the exact prior tail, plus boundary MAE/RMSE between the prior
 last frame and the first newly emitted frame. These are diagnostic signals for
 ranking configurations; they do not replace watching the transition.
+
+In `latent-prefix` mode, `latent_prefix_mae`, `latent_prefix_rmse`, and
+`latent_prefix_max_abs` verify that strength-1 prefix latents survived denoising
+unchanged. Pixel overlap and boundary metrics remain necessary because exact
+latent preservation does not by itself guarantee a seamless causal-VAE decode.
 
 The runner refuses to write into a non-empty output directory by default, which
 prevents metrics and chunks from different experiments being mixed. Set

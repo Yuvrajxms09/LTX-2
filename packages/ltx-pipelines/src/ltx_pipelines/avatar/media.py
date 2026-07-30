@@ -123,3 +123,27 @@ def continuity_metrics(
             }
         )
     return metrics
+
+
+def latent_prefix_metrics(
+    expected_prefix: torch.Tensor | None,
+    generated_latent: torch.Tensor,
+) -> dict[str, float | int]:
+    if expected_prefix is None:
+        return {}
+    if generated_latent.ndim != 5 or expected_prefix.ndim != 5:
+        raise ValueError("Expected latent tensors shaped (B,C,F,H,W)")
+    prefix_frames = expected_prefix.shape[2]
+    batch_channels_match = generated_latent.shape[:2] == expected_prefix.shape[:2]
+    spatial_shape_matches = generated_latent.shape[3:] == expected_prefix.shape[3:]
+    if not batch_channels_match or not spatial_shape_matches:
+        raise ValueError("Generated latent and expected prefix have incompatible batch, channel, or spatial shapes")
+    if generated_latent.shape[2] < prefix_frames:
+        raise ValueError("Generated latent is shorter than the expected prefix")
+    difference = generated_latent[:, :, :prefix_frames].float() - expected_prefix.float()
+    return {
+        "latent_prefix_frames": prefix_frames,
+        "latent_prefix_mae": difference.abs().mean().item(),
+        "latent_prefix_rmse": difference.square().mean().sqrt().item(),
+        "latent_prefix_max_abs": difference.abs().max().item(),
+    }

@@ -8,7 +8,6 @@ import sys
 import tempfile
 import time
 import traceback
-from collections.abc import Iterator
 from contextlib import AbstractContextManager
 from dataclasses import asdict
 from pathlib import Path
@@ -20,12 +19,17 @@ import torch
 
 from ltx_core.loader import LTXV_LORA_COMFY_RENAMING_MAP, LoraPathStrengthAndSDOps
 from ltx_core.model.transformer import X0Model
-from ltx_core.types import Audio
 from ltx_pipelines.avatar.config import AvatarConfig, load_avatar_config
-from ltx_pipelines.avatar.media import FrameWindow, continuity_metrics, save_tail_frames, stereo_audio_window
+from ltx_pipelines.avatar.media import (
+    FrameWindow,
+    continuity_metrics,
+    latent_prefix_metrics,
+    save_tail_frames,
+    stereo_audio_window,
+)
 from ltx_pipelines.avatar.metrics import MetricsRecorder, execution_snapshot
-from ltx_pipelines.avatar.pipeline import AvatarA2VidPipeline, AvatarPromptContext
-from ltx_pipelines.avatar.planning import AvatarChunk, plan_avatar_chunks
+from ltx_pipelines.avatar.pipeline import AvatarA2VidPipeline, AvatarChunkResult, AvatarPromptContext
+from ltx_pipelines.avatar.planning import AvatarChunk, latent_frames_for_pixel_prefix, plan_avatar_chunks
 from ltx_pipelines.utils.args import ImageConditioningInput
 from ltx_pipelines.utils.media_io import encode_video
 from ltx_pipelines.utils.quantization_factory import QuantizationKind
@@ -76,6 +80,8 @@ def _conditioning_inputs(
                 strength=config.generation.reference_strength,
             )
         ]
+    if config.generation.continuation_mode == "latent-prefix":
+        return []
     if len(previous_tail) < chunk.overlap_frames:
         raise RuntimeError(
             f"Chunk {chunk.index} requires {chunk.overlap_frames} overlap frames, "
@@ -90,6 +96,33 @@ def _conditioning_inputs(
         )
         for frame_index, path in enumerate(selected)
     ]
+
+
+def _latent_prefix_for_chunk(
+    config: AvatarConfig,
+    chunk: AvatarChunk,
+    previous_latent_tail: torch.Tensor | None,
+) -> torch.Tensor | None:
+    if chunk.index == 0 or config.generation.continuation_mode != "latent-prefix":
+        return None
+    if previous_latent_tail is None:
+        raise RuntimeError(f"Chunk {chunk.index} requires a latent prefix, but no previous latent tail is available")
+    required_frames = latent_frames_for_pixel_prefix(chunk.overlap_frames)
+    if previous_latent_tail.shape[2] != required_frames:
+        raise RuntimeError(
+            f"Chunk {chunk.index} requires {required_frames} prefix latents, "
+            f"but received {previous_latent_tail.shape[2]}"
+        )
+    return previous_latent_tail
+
+
+def _continuation_tail(config: AvatarConfig, latent: torch.Tensor) -> torch.Tensor | None:
+    if config.generation.continuation_mode != "latent-prefix":
+        return None
+    latent_frames = latent_frames_for_pixel_prefix(config.generation.overlap_frames)
+    if latent.shape[2] < latent_frames:
+        raise RuntimeError(f"Generated latent has {latent.shape[2]} frames; cannot retain {latent_frames}")
+    return latent[:, :, -latent_frames:].detach().clone()
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -175,12 +208,14 @@ def _generate_with_transformer(
     config: AvatarConfig,
     chunk: AvatarChunk,
     images: list[ImageConditioningInput],
+    prefix_latent: torch.Tensor | None,
     recorder: MetricsRecorder,
-) -> tuple[Iterator[torch.Tensor], Audio]:
+) -> AvatarChunkResult:
     result = pipeline.generate_chunk(
         transformer=transformer,
         context=context,
         images=images,
+        prefix_latent=prefix_latent,
         audio_path=config.input.audio_path,
         audio_start_time=chunk.audio_start_seconds,
         seed=config.generation.seed + chunk.index * config.generation.seed_stride,
@@ -194,7 +229,7 @@ def _generate_with_transformer(
         log_denoising_steps=config.diagnostics.log_denoising_steps,
         tensor_statistics=config.diagnostics.tensor_statistics,
     )
-    return result.video, result.audio
+    return result
 
 
 def _device() -> torch.device:
@@ -233,8 +268,9 @@ def _generate_chunk(
     config: AvatarConfig,
     chunk: AvatarChunk,
     images: list[ImageConditioningInput],
+    prefix_latent: torch.Tensor | None,
     recorder: MetricsRecorder,
-) -> tuple[Iterator[torch.Tensor], Audio]:
+) -> AvatarChunkResult:
     if warm_transformer is not None:
         return _generate_with_transformer(
             pipeline,
@@ -243,6 +279,7 @@ def _generate_chunk(
             config,
             chunk,
             images,
+            prefix_latent,
             recorder,
         )
     with (
@@ -256,6 +293,7 @@ def _generate_chunk(
             config,
             chunk,
             images,
+            prefix_latent,
             recorder,
         )
 
@@ -274,36 +312,40 @@ def _run_chunks(
 ) -> None:
     previous_tail: list[str] = []
     previous_tail_tensors: tuple[torch.Tensor, ...] = ()
+    previous_latent_tail: torch.Tensor | None = None
     with _TransformerContext(pipeline, recorder, config.model.warm_transformer) as warm_transformer:
         for chunk in chunks:
             recorder.reset_peak_memory()
             chunk_started = time.perf_counter()
             images = _conditioning_inputs(config, chunk, previous_tail)
+            prefix_latent = _latent_prefix_for_chunk(config, chunk, previous_latent_tail)
             logger.info(
-                "Generating chunk %d: source %.3fs, %d frames, overlap %d, emit %d",
+                "Generating chunk %d: source %.3fs, %d frames, overlap %d, emit %d, continuation %s",
                 chunk.index,
                 chunk.audio_start_seconds,
                 chunk.generation_frames,
                 chunk.overlap_frames,
                 chunk.emitted_frames,
+                config.generation.continuation_mode,
             )
-            video, audio = _generate_chunk(
+            result = _generate_chunk(
                 pipeline,
                 warm_transformer,
                 context,
                 config,
                 chunk,
                 images,
+                prefix_latent,
                 recorder,
             )
             frame_window = FrameWindow(
-                video,
+                result.video,
                 drop_frames=chunk.overlap_frames,
                 emit_frames=chunk.emitted_frames,
                 tail_frames=config.generation.overlap_frames,
             )
             chunk_audio = stereo_audio_window(
-                audio,
+                result.audio,
                 drop_frames=chunk.overlap_frames,
                 emit_frames=chunk.emitted_frames,
                 frame_rate=chunk.frame_rate,
@@ -324,8 +366,14 @@ def _run_chunks(
                 reconstructed_overlap=frame_window.dropped,
                 first_emitted=frame_window.first_emitted,
             )
+            continuity.update(latent_prefix_metrics(prefix_latent, result.latent))
             previous_tail_tensors = frame_window.tail
-            previous_tail = save_tail_frames(previous_tail_tensors, conditioning_dir, chunk.index)
+            previous_latent_tail = _continuation_tail(config, result.latent)
+            previous_tail = (
+                save_tail_frames(previous_tail_tensors, conditioning_dir, chunk.index)
+                if config.generation.continuation_mode == "image-keyframes"
+                else []
+            )
             elapsed = time.perf_counter() - chunk_started
             phase_seconds = recorder.phase_totals(chunk.index)
             denoising_seconds = phase_seconds.get("denoising")
@@ -346,6 +394,7 @@ def _run_chunks(
                 "deadline_margin_seconds": deadline_seconds - elapsed,
                 "meets_realtime_deadline": elapsed <= deadline_seconds,
                 "phase_seconds": phase_seconds,
+                "continuation_mode": config.generation.continuation_mode,
                 "conditioning_images": [image.path for image in images],
                 "continuity": continuity,
             }

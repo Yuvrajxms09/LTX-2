@@ -270,7 +270,46 @@ Check `time_to_first_chunk_seconds`, following-chunk `denoising_fps`,
 `real_time_factor`, `meets_realtime_deadline`, `deadline_margin_seconds`, and
 the overlap/boundary continuity metrics.
 
-## 10. Run the optimized experiment
+## 10. Run exact latent-prefix continuation
+
+Keep the BF16/offload settings unchanged and switch only the continuation
+variables. A 17-frame overlap carries exactly three temporal latents; use 25
+for the four-latent experiment. Use 121 generated frames initially so the model
+has a substantial future region after the clean prefix.
+
+```bash
+!python -m ltx_pipelines.avatar.runner \
+    --config /content/LTX-2/avatar-smoke.toml \
+    --set 'generation.continuation_mode="latent-prefix"' \
+    --set generation.generation_frames=121 \
+    --set generation.overlap_frames=17 \
+    --set generation.overlap_strength=1.0 \
+    --set generation.max_chunks=3 \
+    --set 'output.directory="/content/LTX-2/outputs/avatar-latent-prefix-3"'
+```
+
+The second and later chunks should log `latent_prefix_ready`. Their manifest
+continuity records should report zero or numerically negligible
+`latent_prefix_max_abs`. Judge visual behavior from the decoded overlap and
+boundary metrics plus the concatenated output, not the latent metric alone.
+
+Repeat with four temporal latents:
+
+```bash
+!python -m ltx_pipelines.avatar.runner \
+    --config /content/LTX-2/avatar-smoke.toml \
+    --set 'generation.continuation_mode="latent-prefix"' \
+    --set generation.generation_frames=121 \
+    --set generation.overlap_frames=25 \
+    --set generation.overlap_strength=1.0 \
+    --set generation.max_chunks=3 \
+    --set 'output.directory="/content/LTX-2/outputs/avatar-latent-prefix-4"'
+```
+
+No conditioning PNGs are written or read in latent-prefix mode. The denoised
+latent tail stays in memory and is cloned directly into the next invocation.
+
+## 11. Run the optimized experiment
 
 After the smoke output is correct, create a second config with:
 

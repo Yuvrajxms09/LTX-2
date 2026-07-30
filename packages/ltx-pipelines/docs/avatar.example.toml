@@ -29,10 +29,12 @@ width = 512
 height = 512
 frame_rate = 25.0
 
-# Every model call generates 49 frames. After the first call, 9 frames are
-# conditioned from the previous tail and removed from emitted playback.
-generation_frames = 49
-overlap_frames = 9
+# Every model call generates 121 frames. After the first call, the previous
+# three temporal latents are inserted as a clean 17-frame prefix and removed
+# from emitted playback. Use overlap_frames = 25 for four temporal latents.
+generation_frames = 121
+overlap_frames = 17
+continuation_mode = "latent-prefix"
 reference_strength = 1.0
 overlap_strength = 1.0
 

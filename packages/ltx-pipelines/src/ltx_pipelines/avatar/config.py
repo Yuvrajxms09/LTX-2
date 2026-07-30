@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import tomllib
 from dataclasses import dataclass, field
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,7 @@ class GenerationConfig:
     frame_rate: float = 25.0
     generation_frames: int = 49
     overlap_frames: int = 9
+    continuation_mode: str = "image-keyframes"
     reference_strength: float = 1.0
     overlap_strength: float = 1.0
     seed: int = 10
@@ -105,16 +107,35 @@ class AvatarConfig:
             raise ValueError("generation.overlap_frames must be in [0, generation_frames)")
         if generation.overlap_frames >= generation.generation_frames - 1:
             raise ValueError("generation.overlap_frames must leave at least two newly generated frames")
+        if generation.continuation_mode not in {"image-keyframes", "latent-prefix"}:
+            raise ValueError("generation.continuation_mode must be image-keyframes or latent-prefix")
+        if generation.continuation_mode == "latent-prefix":
+            self._validate_latent_prefix()
         if generation.reference_strength < 0 or generation.overlap_strength < 0:
             raise ValueError("conditioning strengths must be non-negative")
         if generation.seed_stride < 0:
             raise ValueError("generation.seed_stride must be non-negative")
         if generation.max_chunks is not None and generation.max_chunks < 1:
             raise ValueError("generation.max_chunks must be at least 1")
-        if len(generation.sigmas) < 2 or generation.sigmas[-1] != 0:
+        self._validate_sigma_schedule()
+
+    def _validate_sigma_schedule(self) -> None:
+        sigmas = self.generation.sigmas
+        if len(sigmas) < 2 or sigmas[-1] != 0:
             raise ValueError("generation.sigmas must contain at least two values and end at 0")
-        if any(left < right for left, right in zip(generation.sigmas, generation.sigmas[1:], strict=False)):
+        if any(left < right for left, right in pairwise(sigmas)):
             raise ValueError("generation.sigmas must be monotonically non-increasing")
+
+    def _validate_latent_prefix(self) -> None:
+        generation = self.generation
+        if generation.overlap_frames < 1 or (generation.overlap_frames - 1) % 8 != 0:
+            raise ValueError("generation.overlap_frames must satisfy frames = 8*k + 1 in latent-prefix mode")
+        prefix_latent_frames = (generation.overlap_frames - 1) // 8 + 1
+        generation_latent_frames = (generation.generation_frames - 1) // 8 + 1
+        if prefix_latent_frames >= generation_latent_frames:
+            raise ValueError("latent-prefix overlap must leave at least one temporal latent to generate")
+        if generation.overlap_strength != 1.0:
+            raise ValueError("generation.overlap_strength must be 1.0 for exact latent-prefix continuation")
 
 
 def _expect_table(data: dict[str, Any], key: str, *, required: bool = True) -> dict[str, Any]:
@@ -224,6 +245,7 @@ def load_avatar_config(path: str | Path, overrides: tuple[str, ...] = ()) -> Ava
             "frame_rate",
             "generation_frames",
             "overlap_frames",
+            "continuation_mode",
             "reference_strength",
             "overlap_strength",
             "seed",

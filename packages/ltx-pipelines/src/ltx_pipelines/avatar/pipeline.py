@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import torch
 
 from ltx_core.components.noisers import GaussianNoiser
+from ltx_core.conditioning import VideoConditionByLatentIndex
 from ltx_core.loader import LoraPathStrengthAndSDOps
 from ltx_core.loader.registry import Registry
 from ltx_core.model.audio_vae import encode_audio as vae_encode_audio
@@ -14,7 +15,7 @@ from ltx_core.model.transformer.compiling import CompilationConfig
 from ltx_core.model.video_vae import TilingConfig
 from ltx_core.quantization import QuantizationPolicy
 from ltx_core.text_encoders.gemma.embeddings_processor import EmbeddingsProcessorOutput
-from ltx_core.types import Audio, AudioLatentShape, LatentState
+from ltx_core.types import Audio, AudioLatentShape, LatentState, VideoLatentShape, VideoPixelShape
 from ltx_pipelines.avatar.metrics import MetricsRecorder, TimedDenoiser, tensor_snapshot
 from ltx_pipelines.utils.allocator_trim_strategy import AllocatorTrimStrategy
 from ltx_pipelines.utils.args import ImageConditioningInput
@@ -45,6 +46,7 @@ class AvatarPromptContext:
 class AvatarChunkResult:
     video: Iterator[torch.Tensor]
     audio: Audio
+    latent: torch.Tensor
 
 
 class DrivingAudioDenoiser:
@@ -176,6 +178,7 @@ class AvatarA2VidPipeline:
         transformer: X0Model,
         context: AvatarPromptContext,
         images: list[ImageConditioningInput],
+        prefix_latent: torch.Tensor | None,
         audio_path: str,
         audio_start_time: float,
         seed: int,
@@ -241,16 +244,52 @@ class AvatarA2VidPipeline:
                 audio_sigma_policy="zero_clean",
             )
 
-        with recorder.phase("image_conditioning", chunk_index=chunk_index, image_count=len(images)):
-            conditionings = self.image_conditioner(
-                lambda encoder: combined_image_conditionings(
-                    images=images,
-                    height=height,
-                    width=width,
-                    video_encoder=encoder,
-                    dtype=self.dtype,
-                    device=self.device,
+        if prefix_latent is None:
+            with recorder.phase("image_conditioning", chunk_index=chunk_index, image_count=len(images)):
+                conditionings = self.image_conditioner(
+                    lambda encoder: combined_image_conditionings(
+                        images=images,
+                        height=height,
+                        width=width,
+                        video_encoder=encoder,
+                        dtype=self.dtype,
+                        device=self.device,
+                    )
                 )
+        else:
+            if images:
+                raise ValueError("A latent-prefix chunk cannot also use image keyframe conditioning")
+            target_shape = VideoLatentShape.from_pixel_shape(
+                VideoPixelShape(batch=1, frames=num_frames, height=height, width=width, fps=frame_rate)
+            )
+            expected_spatial_shape = target_shape.to_torch_shape()
+            if prefix_latent.ndim != 5:
+                raise ValueError(f"Expected prefix latent shaped (B,C,F,H,W), got {tuple(prefix_latent.shape)}")
+            if (
+                prefix_latent.shape[0] != expected_spatial_shape[0]
+                or prefix_latent.shape[1] != expected_spatial_shape[1]
+                or prefix_latent.shape[3:] != expected_spatial_shape[3:]
+            ):
+                raise ValueError(
+                    f"Prefix latent shape {tuple(prefix_latent.shape)} is incompatible with target "
+                    f"{tuple(expected_spatial_shape)}"
+                )
+            if prefix_latent.shape[2] >= target_shape.frames:
+                raise ValueError("Prefix latent must leave at least one temporal latent to generate")
+            prefix_latent = prefix_latent.to(device=self.device, dtype=self.dtype)
+            conditionings = [
+                VideoConditionByLatentIndex(
+                    latent=prefix_latent,
+                    strength=1.0,
+                    latent_idx=0,
+                )
+            ]
+            recorder.emit(
+                "latent_prefix_ready",
+                chunk_index=chunk_index,
+                pixel_frames=(prefix_latent.shape[2] - 1) * 8 + 1,
+                latent=tensor_snapshot(prefix_latent),
+                strength=1.0,
             )
 
         denoiser = TimedDenoiser(
@@ -294,4 +333,4 @@ class AvatarA2VidPipeline:
             waveform=decoded_audio.waveform.squeeze(0),
             sampling_rate=decoded_audio.sampling_rate,
         )
-        return AvatarChunkResult(video=decoded_video, audio=original_audio)
+        return AvatarChunkResult(video=decoded_video, audio=original_audio, latent=video_state.latent)

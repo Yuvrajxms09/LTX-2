@@ -1,7 +1,18 @@
+import pytest
 import torch
 
-from ltx_pipelines.avatar.media import FrameWindow, continuity_metrics
-from ltx_pipelines.avatar.planning import plan_avatar_chunks
+from ltx_pipelines.avatar.media import FrameWindow, continuity_metrics, latent_prefix_metrics
+from ltx_pipelines.avatar.planning import latent_frames_for_pixel_prefix, plan_avatar_chunks
+
+
+def test_latent_frames_for_pixel_prefix_matches_causal_vae_layout() -> None:
+    assert latent_frames_for_pixel_prefix(17) == 3
+    assert latent_frames_for_pixel_prefix(25) == 4
+
+
+def test_latent_frames_for_pixel_prefix_rejects_unaligned_frame_count() -> None:
+    with pytest.raises(ValueError, match=r"8\*k \+ 1"):
+        latent_frames_for_pixel_prefix(8)
 
 
 def test_plan_avatar_chunks_rewinds_audio_and_only_emits_unique_frames() -> None:
@@ -51,3 +62,17 @@ def test_continuity_metrics_compare_overlap_and_boundary() -> None:
     assert metrics["overlap_compared_frames"] == 2
     assert metrics["overlap_mae"] == 0.125
     assert metrics["boundary_mae"] == 0.5
+
+
+def test_latent_prefix_metrics_verify_the_clean_prefix_survived_denoising() -> None:
+    prefix = torch.arange(12, dtype=torch.float32).reshape(1, 2, 3, 1, 2)
+    generated = torch.cat([prefix, torch.full((1, 2, 2, 1, 2), 100.0)], dim=2)
+
+    metrics = latent_prefix_metrics(prefix, generated)
+
+    assert metrics == {
+        "latent_prefix_frames": 3,
+        "latent_prefix_mae": 0.0,
+        "latent_prefix_rmse": 0.0,
+        "latent_prefix_max_abs": 0.0,
+    }
