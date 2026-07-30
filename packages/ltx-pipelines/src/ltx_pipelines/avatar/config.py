@@ -50,6 +50,9 @@ class GenerationConfig:
     reference_strength: float = 1.0
     overlap_strength: float = 1.0
     identity_anchor_strength: float = 0.0
+    face_id_reference_strength: float = 0.0
+    face_id_source_id: float = 2.0
+    face_id_phase_scale: float = 1.0
     seed: int = 10
     seed_stride: int = 1
     sigmas: tuple[float, ...] = _DEFAULT_DISTILLED_SIGMAS
@@ -113,6 +116,7 @@ class AvatarConfig:
         if generation.reference_strength < 0 or generation.overlap_strength < 0:
             raise ValueError("conditioning strengths must be non-negative")
         self._validate_identity_anchor()
+        self._validate_face_id_reference()
         if generation.seed_stride < 0:
             raise ValueError("generation.seed_stride must be non-negative")
         if generation.max_chunks is not None and generation.max_chunks < 1:
@@ -156,6 +160,16 @@ class AvatarConfig:
             raise ValueError("generation.identity_anchor_strength must be between 0 and 1")
         if generation.identity_anchor_strength > 0 and generation.continuation_mode != "latent-prefix":
             raise ValueError("generation.identity_anchor_strength requires latent-prefix continuation")
+
+    def _validate_face_id_reference(self) -> None:
+        generation = self.generation
+        if not 0 <= generation.face_id_reference_strength <= 1:
+            raise ValueError("generation.face_id_reference_strength must be between 0 and 1")
+        if generation.face_id_reference_strength > 0:
+            if generation.face_id_source_id == 0:
+                raise ValueError("generation.face_id_source_id must be non-zero when Face-ID is enabled")
+            if generation.face_id_phase_scale <= 0:
+                raise ValueError("generation.face_id_phase_scale must be positive when Face-ID is enabled")
 
 
 def _expect_table(data: dict[str, Any], key: str, *, required: bool = True) -> dict[str, Any]:
@@ -286,6 +300,9 @@ def load_avatar_config(path: str | Path, overrides: tuple[str, ...] = ()) -> Ava
             "reference_strength",
             "overlap_strength",
             "identity_anchor_strength",
+            "face_id_reference_strength",
+            "face_id_source_id",
+            "face_id_phase_scale",
             "seed",
             "seed_stride",
             "sigmas",

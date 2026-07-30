@@ -5,6 +5,7 @@ from ltx_core.conditioning.types.keyframe_cond import VideoConditionByKeyframeIn
 from ltx_core.conditioning.types.latent_cond import VideoConditionByLatentIndex
 from ltx_core.conditioning.types.mask_cond import VideoConditionByMask
 from ltx_core.conditioning.types.reference_audio_cond import AudioConditionByReferenceLatent
+from ltx_core.conditioning.types.reference_overlap_cond import VideoConditionByReferenceOverlap
 from ltx_core.conditioning.types.reference_video_cond import VideoConditionByReferenceLatent
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "VideoConditionByLatentIndex",
     "VideoConditionByMask",
     "VideoConditionByReferenceLatent",
+    "VideoConditionByReferenceOverlap",
 ]

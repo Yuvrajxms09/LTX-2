@@ -167,6 +167,34 @@ def test_load_avatar_config_rejects_identity_anchor_strength_above_one(tmp_path:
         )
 
 
+def test_load_avatar_config_accepts_face_id_reference(tmp_path: Path) -> None:
+    config = load_avatar_config(
+        _write_config(tmp_path),
+        overrides=(
+            'generation.continuation_mode="latent-prefix"',
+            "generation.overlap_frames=17",
+            "generation.face_id_reference_strength=0.8",
+            "generation.face_id_source_id=2.0",
+            "generation.face_id_phase_scale=1.0",
+        ),
+    )
+
+    assert config.generation.face_id_reference_strength == 0.8
+    assert config.generation.face_id_source_id == 2.0
+    assert config.generation.face_id_phase_scale == 1.0
+
+
+def test_load_avatar_config_rejects_zero_face_id_source(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="face_id_source_id must be non-zero"):
+        load_avatar_config(
+            _write_config(tmp_path),
+            overrides=(
+                "generation.face_id_reference_strength=1.0",
+                "generation.face_id_source_id=0.0",
+            ),
+        )
+
+
 def test_load_avatar_config_rejects_unknown_settings(tmp_path: Path) -> None:
     path = _write_config(tmp_path)
     path.write_text(path.read_text(encoding="utf-8").replace("overlap_frames = 9", "overlap_frames = 9\novrelap = 8"))

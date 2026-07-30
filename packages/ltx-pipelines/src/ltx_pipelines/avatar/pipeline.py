@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import torch
 
 from ltx_core.components.noisers import GaussianNoiser
-from ltx_core.conditioning import ConditioningItem, VideoConditionByLatentIndex
+from ltx_core.conditioning import ConditioningItem, VideoConditionByLatentIndex, VideoConditionByReferenceOverlap
 from ltx_core.loader import LoraPathStrengthAndSDOps
 from ltx_core.loader.registry import Registry
 from ltx_core.model.audio_vae import encode_audio as vae_encode_audio
@@ -32,7 +32,7 @@ from ltx_pipelines.utils.helpers import (
     get_device,
     modality_from_latent_state,
 )
-from ltx_pipelines.utils.media_io import decode_audio_from_file
+from ltx_pipelines.utils.media_io import decode_audio_from_file, load_image_and_preprocess
 from ltx_pipelines.utils.types import DenoisedLatentResult, ModalitySpec, OffloadMode
 
 
@@ -190,6 +190,35 @@ class AvatarA2VidPipeline:
             )
         )
 
+    def encode_face_id_reference(
+        self,
+        image_path: str,
+        height: int,
+        width: int,
+        strength: float,
+        source_id: float,
+        phase_scale: float,
+    ) -> list[ConditioningItem]:
+        def encode(video_encoder: torch.nn.Module) -> list[ConditioningItem]:
+            pixels = load_image_and_preprocess(
+                image_path=image_path,
+                height=height,
+                width=width,
+                dtype=self.dtype,
+                device=self.device,
+            )
+            latent = video_encoder(pixels)
+            return [
+                VideoConditionByReferenceOverlap(
+                    latent=latent,
+                    source_id=source_id,
+                    phase_scale=phase_scale,
+                    strength=strength,
+                )
+            ]
+
+        return self.image_conditioner(encode)
+
     @staticmethod
     def _prompt_context(encoded: EmbeddingsProcessorOutput) -> AvatarPromptContext:
         return AvatarPromptContext(video=encoded.video_encoding, audio=encoded.audio_encoding)
@@ -212,6 +241,7 @@ class AvatarA2VidPipeline:
         prefix_latent: torch.Tensor | None,
         prefix_strength: float,
         identity_conditionings: list[ConditioningItem],
+        face_id_conditionings: list[ConditioningItem],
         audio_path: str,
         audio_start_time: float,
         seed: int,
@@ -316,6 +346,13 @@ class AvatarA2VidPipeline:
                 latent=tensor_snapshot(prefix_latent),
                 strength=prefix_strength,
                 identity_anchor_count=len(identity_conditionings),
+            )
+        conditionings.extend(face_id_conditionings)
+        if face_id_conditionings:
+            recorder.emit(
+                "face_id_reference_applied",
+                chunk_index=chunk_index,
+                conditioning_count=len(face_id_conditionings),
             )
 
         denoiser = TimedDenoiser(

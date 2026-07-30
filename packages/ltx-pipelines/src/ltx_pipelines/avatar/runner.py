@@ -75,6 +75,8 @@ def _conditioning_inputs(
     chunk: AvatarChunk,
     previous_tail: list[str],
 ) -> list[ImageConditioningInput]:
+    if config.generation.face_id_reference_strength > 0:
+        return []
     if chunk.index == 0 or config.generation.continuation_mode == "reference-reset":
         return [
             ImageConditioningInput(
@@ -103,11 +105,12 @@ def _conditioning_inputs(
 
 def _chunk_prompts(config: AvatarConfig, chunks: list[AvatarChunk]) -> tuple[str, ...]:
     configured = config.input.chunk_prompts
-    if not configured:
-        return (config.input.prompt,) * len(chunks)
-    if len(configured) != len(chunks):
+    if configured and len(configured) != len(chunks):
         raise ValueError(f"input.chunk_prompts has {len(configured)} entries, but the run plans {len(chunks)} chunks")
-    return configured
+    prompts = configured or (config.input.prompt,) * len(chunks)
+    if config.generation.face_id_reference_strength <= 0:
+        return prompts
+    return tuple(prompt if prompt.lstrip().startswith("ref_t2v:") else f"ref_t2v: {prompt}" for prompt in prompts)
 
 
 def _encode_prompt_contexts(
@@ -264,6 +267,41 @@ def _encode_identity_anchor(
     return conditionings
 
 
+def _encode_face_id_reference(
+    pipeline: AvatarA2VidPipeline,
+    config: AvatarConfig,
+    recorder: MetricsRecorder,
+) -> list[ConditioningItem]:
+    strength = config.generation.face_id_reference_strength
+    if strength == 0:
+        return []
+    with recorder.phase(
+        "face_id_reference_encoding",
+        strength=strength,
+        source_id=config.generation.face_id_source_id,
+        phase_scale=config.generation.face_id_phase_scale,
+    ):
+        conditionings = pipeline.encode_face_id_reference(
+            image_path=config.input.image_path,
+            height=config.generation.height,
+            width=config.generation.width,
+            strength=strength,
+            source_id=config.generation.face_id_source_id,
+            phase_scale=config.generation.face_id_phase_scale,
+        )
+    if len(conditionings) != 1:
+        raise RuntimeError(f"Expected one Face-ID reference conditioning, got {len(conditionings)}")
+    recorder.emit(
+        "face_id_reference_ready",
+        image_path=config.input.image_path,
+        strength=strength,
+        source_id=config.generation.face_id_source_id,
+        phase_scale=config.generation.face_id_phase_scale,
+        cached=True,
+    )
+    return conditionings
+
+
 def _generate_with_transformer(
     pipeline: AvatarA2VidPipeline,
     transformer: X0Model,
@@ -273,6 +311,7 @@ def _generate_with_transformer(
     images: list[ImageConditioningInput],
     prefix_latent: torch.Tensor | None,
     identity_conditionings: list[ConditioningItem],
+    face_id_conditionings: list[ConditioningItem],
     recorder: MetricsRecorder,
 ) -> AvatarChunkResult:
     result = pipeline.generate_chunk(
@@ -282,6 +321,7 @@ def _generate_with_transformer(
         prefix_latent=prefix_latent,
         prefix_strength=config.generation.overlap_strength,
         identity_conditionings=identity_conditionings,
+        face_id_conditionings=face_id_conditionings,
         audio_path=config.input.audio_path,
         audio_start_time=chunk.audio_start_seconds,
         seed=config.generation.seed + chunk.index * config.generation.seed_stride,
@@ -336,6 +376,7 @@ def _generate_chunk(
     images: list[ImageConditioningInput],
     prefix_latent: torch.Tensor | None,
     identity_conditionings: list[ConditioningItem],
+    face_id_conditionings: list[ConditioningItem],
     recorder: MetricsRecorder,
 ) -> AvatarChunkResult:
     if warm_transformer is not None:
@@ -348,6 +389,7 @@ def _generate_chunk(
             images,
             prefix_latent,
             identity_conditionings,
+            face_id_conditionings,
             recorder,
         )
     with (
@@ -363,6 +405,7 @@ def _generate_chunk(
             images,
             prefix_latent,
             identity_conditionings,
+            face_id_conditionings,
             recorder,
         )
 
@@ -457,6 +500,7 @@ def _run_chunks(  # noqa: PLR0913, PLR0915
     recorder: MetricsRecorder,
     run_started: float,
     identity_conditionings: list[ConditioningItem],
+    face_id_conditionings: list[ConditioningItem],
 ) -> None:
     if len(contexts) != len(chunks) or len(prompts) != len(chunks):
         raise ValueError("Every planned chunk requires exactly one prompt context")
@@ -495,6 +539,7 @@ def _run_chunks(  # noqa: PLR0913, PLR0915
                 images,
                 prefix_latent,
                 identity_conditionings,
+                face_id_conditionings,
                 recorder,
             )
             frame_window = FrameWindow(
@@ -574,6 +619,7 @@ def _run_chunks(  # noqa: PLR0913, PLR0915
                 "prompt": prompts[chunk.index],
                 "conditioning_images": [image.path for image in images],
                 "identity_anchor_enabled": bool(identity_conditionings),
+                "face_id_reference_enabled": bool(face_id_conditionings),
                 "continuity": continuity,
                 "latent_fusion": latent_fusion,
             }
@@ -656,6 +702,7 @@ def run_avatar(config: AvatarConfig) -> Path:
         pipeline = _build_pipeline(config, recorder)
         contexts = _encode_prompt_contexts(pipeline, config, prompts, recorder)
         identity_conditionings = _encode_identity_anchor(pipeline, config, recorder)
+        face_id_conditionings = _encode_face_id_reference(pipeline, config, recorder)
         temporary_context = (
             None
             if config.output.save_conditioning_frames
@@ -675,6 +722,7 @@ def run_avatar(config: AvatarConfig) -> Path:
             recorder,
             run_started,
             identity_conditionings,
+            face_id_conditionings,
         )
         manifest["status"] = "completed"
         manifest["wall_seconds"] = time.perf_counter() - run_started

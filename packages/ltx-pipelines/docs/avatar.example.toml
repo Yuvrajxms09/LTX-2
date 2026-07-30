@@ -54,6 +54,12 @@ overlap_strength = 1.0
 # Optional model-native keyframe at temporal index -1 on continuation chunks.
 # Set to 0.25-0.5 to test identity stabilization; 0 disables it.
 identity_anchor_strength = 0.0
+# LTX-Best-Face-ID requires its LoRA plus this source-tagged overlap reference.
+# Enabling it replaces ordinary frame-zero I2V conditioning with the original
+# portrait as a persistent identity reference on every chunk.
+face_id_reference_strength = 0.0
+face_id_source_id = 2.0
+face_id_phase_scale = 1.0
 
 seed = 10
 seed_stride = 1

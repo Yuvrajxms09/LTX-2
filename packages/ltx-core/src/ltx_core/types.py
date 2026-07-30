@@ -200,6 +200,8 @@ class LatentState:
     positions: torch.Tensor
     clean_latent: torch.Tensor
     attention_mask: torch.Tensor | None = None
+    reference_overlap_token_count: int = 0
+    reference_source_phase: float = 0.0
 
     def clone(self) -> "LatentState":
         return LatentState(
@@ -208,4 +210,6 @@ class LatentState:
             positions=self.positions.clone(),
             clean_latent=self.clean_latent.clone(),
             attention_mask=self.attention_mask.clone() if self.attention_mask is not None else None,
+            reference_overlap_token_count=self.reference_overlap_token_count,
+            reference_source_phase=self.reference_source_phase,
         )

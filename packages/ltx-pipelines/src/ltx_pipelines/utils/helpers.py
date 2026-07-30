@@ -269,6 +269,8 @@ def modality_from_latent_state(
         context=context,
         context_mask=None,
         attention_mask=state.attention_mask,
+        reference_overlap_token_count=state.reference_overlap_token_count,
+        reference_source_phase=state.reference_source_phase,
     )
 
 

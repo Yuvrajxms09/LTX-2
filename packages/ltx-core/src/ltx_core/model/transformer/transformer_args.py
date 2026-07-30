@@ -11,6 +11,7 @@ from ltx_core.model.transformer.rope import (
     generate_freq_grid_pytorch,
     precompute_freqs_cis,
 )
+from ltx_core.model.transformer.source_phase import apply_source_phase
 
 
 @dataclass(frozen=True)
@@ -225,6 +226,11 @@ class TransformerArgsPreprocessor:
             use_middle_indices_grid=self.use_middle_indices_grid,
             num_attention_heads=self.num_attention_heads,
             x_dtype=modality.latent.dtype,
+        )
+        pe = apply_source_phase(
+            pe,
+            reference_token_count=modality.reference_overlap_token_count,
+            source_phase=modality.reference_source_phase,
         )
         self_attention_mask = self._prepare_self_attention_mask(modality.attention_mask, modality.latent.dtype)
         return TransformerArgs(
