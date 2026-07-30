@@ -38,6 +38,9 @@ overlap_frames = 17
 continuation_mode = "latent-prefix"
 reference_strength = 1.0
 overlap_strength = 1.0
+# Optional model-native keyframe at temporal index -1 on continuation chunks.
+# Set to 0.25-0.5 to test identity stabilization; 0 disables it.
+identity_anchor_strength = 0.0
 
 seed = 10
 seed_stride = 1

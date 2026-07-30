@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock, Mock
+
 import pytest
 import torch
 
@@ -10,7 +12,12 @@ from ltx_pipelines.avatar.config import (
 )
 from ltx_pipelines.avatar.metrics import execution_snapshot, tensor_snapshot
 from ltx_pipelines.avatar.planning import AvatarChunk
-from ltx_pipelines.avatar.runner import _continuation_tail, _latent_prefix_for_chunk, _require_inference_runtime
+from ltx_pipelines.avatar.runner import (
+    _continuation_tail,
+    _encode_identity_anchor,
+    _latent_prefix_for_chunk,
+    _require_inference_runtime,
+)
 
 
 def test_require_inference_runtime_rejects_autograd_execution() -> None:
@@ -78,3 +85,36 @@ def test_latent_prefix_for_chunk_reuses_exact_tail() -> None:
     prefix = _latent_prefix_for_chunk(config, chunk, tail)
 
     assert prefix is tail
+
+
+def test_identity_anchor_is_cached_at_negative_temporal_index() -> None:
+    config = AvatarConfig(
+        model=ModelConfig(checkpoint_path="model", gemma_root="gemma"),
+        input=InputConfig(image_path="image", audio_path="audio", prompt="prompt"),
+        generation=GenerationConfig(
+            generation_frames=121,
+            overlap_frames=17,
+            continuation_mode="latent-prefix",
+            identity_anchor_strength=0.5,
+        ),
+        output=OutputConfig(directory="output"),
+    )
+    pipeline = Mock()
+    conditioning = object()
+    pipeline.encode_image_conditionings.return_value = [conditioning]
+    recorder = MagicMock()
+
+    result = _encode_identity_anchor(pipeline, config, recorder)
+
+    assert result == [conditioning]
+    image = pipeline.encode_image_conditionings.call_args.kwargs["images"][0]
+    assert image.path == "image"
+    assert image.frame_idx == -1
+    assert image.strength == 0.5
+    recorder.emit.assert_called_once_with(
+        "identity_anchor_ready",
+        image_path="image",
+        frame_idx=-1,
+        strength=0.5,
+        cached=True,
+    )

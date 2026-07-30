@@ -31,7 +31,12 @@ settings intended for avatar experiments are exposed directly:
   - `image-keyframes` preserves the original decoded-tail experiment.
   - `latent-prefix` carries the previous denoised latent tail directly and bypasses
     PNG serialization and video-VAE re-encoding between chunks.
-- `reference_strength` and `overlap_strength`: image-conditioning strengths.
+- `reference_strength` and `overlap_strength`: first-frame and temporal-prefix strengths.
+- `identity_anchor_strength`: when greater than zero in `latent-prefix` mode,
+  encodes the original portrait once and appends it to every continuation chunk
+  as a model-native keyframe at temporal index `-1`. The cached negative-time
+  reference is outside the generated timeline and is intended to reduce identity
+  drift. Start with `0.25` or `0.5`; `0` disables it.
 - `frame_rate`, resolution, seed behavior, and the complete distilled sigma schedule.
 - optional, loader-compatible LoRA paths and strengths. No LoRA is required for
   the external driving-audio baseline.
@@ -154,6 +159,9 @@ unchanged. Pixel overlap and boundary metrics remain necessary because exact
 latent preservation does not by itself guarantee a seamless causal-VAE decode.
 Each chunk also records `latent_fusion`: the discarded causal-boundary latent,
 the number of blended overlap latents, and the accumulated timeline length.
+`identity_anchor_enabled` records whether the cached negative-index portrait
+was supplied. The `identity_anchor_ready` event records its fixed index,
+strength, and cache status.
 
 The runner refuses to write into a non-empty output directory by default, which
 prevents metrics and chunks from different experiments being mixed. Set

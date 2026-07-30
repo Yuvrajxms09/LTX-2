@@ -317,6 +317,17 @@ three-latent run with `generation.overlap_strength=0.5`. This is the official
 LTX extension sampler's default soft-conditioning strength; keep every other
 setting and the seed unchanged for a useful A/B comparison.
 
+To test identity stabilization in the same run, add:
+
+```bash
+--set generation.identity_anchor_strength=0.5
+```
+
+This encodes the original portrait once and reuses it on every continuation
+chunk as a model-native keyframe at temporal index `-1`. It does not add the
+portrait to the emitted timeline and does not require an IC-LoRA. Compare it
+against an otherwise identical run with `identity_anchor_strength=0.0`.
+
 ## 11. Run the optimized experiment
 
 After the smoke output is correct, create a second config with:

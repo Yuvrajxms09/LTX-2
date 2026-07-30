@@ -17,6 +17,7 @@ from typing import Any
 import av
 import torch
 
+from ltx_core.conditioning import ConditioningItem
 from ltx_core.loader import LTXV_LORA_COMFY_RENAMING_MAP, LoraPathStrengthAndSDOps
 from ltx_core.model.transformer import X0Model
 from ltx_core.types import Audio
@@ -203,6 +204,37 @@ def _build_pipeline(config: AvatarConfig, recorder: MetricsRecorder) -> AvatarA2
         )
 
 
+def _encode_identity_anchor(
+    pipeline: AvatarA2VidPipeline,
+    config: AvatarConfig,
+    recorder: MetricsRecorder,
+) -> list[ConditioningItem]:
+    strength = config.generation.identity_anchor_strength
+    if strength == 0:
+        return []
+    image = ImageConditioningInput(
+        path=config.input.image_path,
+        frame_idx=-1,
+        strength=strength,
+    )
+    with recorder.phase("identity_anchor_encoding", frame_idx=-1, strength=strength):
+        conditionings = pipeline.encode_image_conditionings(
+            images=[image],
+            height=config.generation.height,
+            width=config.generation.width,
+        )
+    if len(conditionings) != 1:
+        raise RuntimeError(f"Expected one identity-anchor conditioning, got {len(conditionings)}")
+    recorder.emit(
+        "identity_anchor_ready",
+        image_path=config.input.image_path,
+        frame_idx=-1,
+        strength=strength,
+        cached=True,
+    )
+    return conditionings
+
+
 def _generate_with_transformer(
     pipeline: AvatarA2VidPipeline,
     transformer: X0Model,
@@ -211,6 +243,7 @@ def _generate_with_transformer(
     chunk: AvatarChunk,
     images: list[ImageConditioningInput],
     prefix_latent: torch.Tensor | None,
+    identity_conditionings: list[ConditioningItem],
     recorder: MetricsRecorder,
 ) -> AvatarChunkResult:
     result = pipeline.generate_chunk(
@@ -219,6 +252,7 @@ def _generate_with_transformer(
         images=images,
         prefix_latent=prefix_latent,
         prefix_strength=config.generation.overlap_strength,
+        identity_conditionings=identity_conditionings,
         audio_path=config.input.audio_path,
         audio_start_time=chunk.audio_start_seconds,
         seed=config.generation.seed + chunk.index * config.generation.seed_stride,
@@ -272,6 +306,7 @@ def _generate_chunk(
     chunk: AvatarChunk,
     images: list[ImageConditioningInput],
     prefix_latent: torch.Tensor | None,
+    identity_conditionings: list[ConditioningItem],
     recorder: MetricsRecorder,
 ) -> AvatarChunkResult:
     if warm_transformer is not None:
@@ -283,6 +318,7 @@ def _generate_chunk(
             chunk,
             images,
             prefix_latent,
+            identity_conditionings,
             recorder,
         )
     with (
@@ -297,6 +333,7 @@ def _generate_chunk(
             chunk,
             images,
             prefix_latent,
+            identity_conditionings,
             recorder,
         )
 
@@ -378,7 +415,7 @@ def _encode_combined_latent_output(
     }
 
 
-def _run_chunks(
+def _run_chunks(  # noqa: PLR0913
     pipeline: AvatarA2VidPipeline,
     context: AvatarPromptContext,
     config: AvatarConfig,
@@ -389,6 +426,7 @@ def _run_chunks(
     manifest_path: Path,
     recorder: MetricsRecorder,
     run_started: float,
+    identity_conditionings: list[ConditioningItem],
 ) -> None:
     previous_tail: list[str] = []
     previous_tail_tensors: tuple[torch.Tensor, ...] = ()
@@ -424,6 +462,7 @@ def _run_chunks(
                 chunk,
                 images,
                 prefix_latent,
+                identity_conditionings,
                 recorder,
             )
             frame_window = FrameWindow(
@@ -501,6 +540,7 @@ def _run_chunks(
                 "phase_seconds": phase_seconds,
                 "continuation_mode": config.generation.continuation_mode,
                 "conditioning_images": [image.path for image in images],
+                "identity_anchor_enabled": bool(identity_conditionings),
                 "continuity": continuity,
                 "latent_fusion": latent_fusion,
             }
@@ -586,6 +626,7 @@ def run_avatar(config: AvatarConfig) -> Path:
                 image_path=config.input.image_path,
                 seed=config.generation.seed,
             )
+        identity_conditionings = _encode_identity_anchor(pipeline, config, recorder)
         temporary_context = (
             None
             if config.output.save_conditioning_frames
@@ -603,6 +644,7 @@ def run_avatar(config: AvatarConfig) -> Path:
             manifest_path,
             recorder,
             run_started,
+            identity_conditionings,
         )
         manifest["status"] = "completed"
         manifest["wall_seconds"] = time.perf_counter() - run_started

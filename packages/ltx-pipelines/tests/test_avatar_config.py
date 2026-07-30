@@ -111,6 +111,39 @@ def test_load_avatar_config_rejects_latent_prefix_strength_above_one(tmp_path: P
         )
 
 
+def test_load_avatar_config_accepts_negative_identity_anchor(tmp_path: Path) -> None:
+    config = load_avatar_config(
+        _write_config(tmp_path),
+        overrides=(
+            'generation.continuation_mode="latent-prefix"',
+            "generation.overlap_frames=17",
+            "generation.identity_anchor_strength=0.5",
+        ),
+    )
+
+    assert config.generation.identity_anchor_strength == 0.5
+
+
+def test_load_avatar_config_rejects_identity_anchor_without_latent_prefix(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="requires latent-prefix"):
+        load_avatar_config(
+            _write_config(tmp_path),
+            overrides=("generation.identity_anchor_strength=0.5",),
+        )
+
+
+def test_load_avatar_config_rejects_identity_anchor_strength_above_one(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="must be between 0 and 1"):
+        load_avatar_config(
+            _write_config(tmp_path),
+            overrides=(
+                'generation.continuation_mode="latent-prefix"',
+                "generation.overlap_frames=17",
+                "generation.identity_anchor_strength=1.1",
+            ),
+        )
+
+
 def test_load_avatar_config_rejects_unknown_settings(tmp_path: Path) -> None:
     path = _write_config(tmp_path)
     path.write_text(path.read_text(encoding="utf-8").replace("overlap_frames = 9", "overlap_frames = 9\novrelap = 8"))

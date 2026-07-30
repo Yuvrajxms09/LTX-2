@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import torch
 
 from ltx_core.components.noisers import GaussianNoiser
-from ltx_core.conditioning import VideoConditionByLatentIndex
+from ltx_core.conditioning import ConditioningItem, VideoConditionByLatentIndex
 from ltx_core.loader import LoraPathStrengthAndSDOps
 from ltx_core.loader.registry import Registry
 from ltx_core.model.audio_vae import encode_audio as vae_encode_audio
@@ -159,6 +159,23 @@ class AvatarA2VidPipeline:
         )
         return self._prompt_context(encoded)
 
+    def encode_image_conditionings(
+        self,
+        images: list[ImageConditioningInput],
+        height: int,
+        width: int,
+    ) -> list[ConditioningItem]:
+        return self.image_conditioner(
+            lambda encoder: combined_image_conditionings(
+                images=images,
+                height=height,
+                width=width,
+                video_encoder=encoder,
+                dtype=self.dtype,
+                device=self.device,
+            )
+        )
+
     @staticmethod
     def _prompt_context(encoded: EmbeddingsProcessorOutput) -> AvatarPromptContext:
         return AvatarPromptContext(video=encoded.video_encoding, audio=encoded.audio_encoding)
@@ -180,6 +197,7 @@ class AvatarA2VidPipeline:
         images: list[ImageConditioningInput],
         prefix_latent: torch.Tensor | None,
         prefix_strength: float,
+        identity_conditionings: list[ConditioningItem],
         audio_path: str,
         audio_start_time: float,
         seed: int,
@@ -247,16 +265,7 @@ class AvatarA2VidPipeline:
 
         if prefix_latent is None:
             with recorder.phase("image_conditioning", chunk_index=chunk_index, image_count=len(images)):
-                conditionings = self.image_conditioner(
-                    lambda encoder: combined_image_conditionings(
-                        images=images,
-                        height=height,
-                        width=width,
-                        video_encoder=encoder,
-                        dtype=self.dtype,
-                        device=self.device,
-                    )
-                )
+                conditionings = self.encode_image_conditionings(images, height, width)
         else:
             if images:
                 raise ValueError("A latent-prefix chunk cannot also use image keyframe conditioning")
@@ -285,12 +294,14 @@ class AvatarA2VidPipeline:
                     latent_idx=0,
                 )
             ]
+            conditionings.extend(identity_conditionings)
             recorder.emit(
                 "latent_prefix_ready",
                 chunk_index=chunk_index,
                 pixel_frames=(prefix_latent.shape[2] - 1) * 8 + 1,
                 latent=tensor_snapshot(prefix_latent),
                 strength=prefix_strength,
+                identity_anchor_count=len(identity_conditionings),
             )
 
         denoiser = TimedDenoiser(
