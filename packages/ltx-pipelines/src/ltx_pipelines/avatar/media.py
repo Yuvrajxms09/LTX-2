@@ -11,6 +11,48 @@ from PIL import Image
 from ltx_core.types import Audio
 
 
+def fuse_causal_latent_extension(
+    history: torch.Tensor,
+    extension: torch.Tensor,
+    prefix_latent_frames: int,
+) -> torch.Tensor:
+    """Merge an LTX extension into a canonical causal-VAE latent timeline."""
+    if history.ndim != 5 or extension.ndim != 5:
+        raise ValueError("Expected latent tensors shaped (B,C,F,H,W)")
+    if history.shape[:2] != extension.shape[:2] or history.shape[3:] != extension.shape[3:]:
+        raise ValueError("History and extension latents have incompatible batch, channel, or spatial shapes")
+    if prefix_latent_frames < 2:
+        raise ValueError("Causal latent extension requires at least two prefix latent frames")
+    if history.shape[2] < prefix_latent_frames:
+        raise ValueError("History is shorter than the requested latent prefix")
+    if extension.shape[2] <= prefix_latent_frames:
+        raise ValueError("Extension must contain new latent frames beyond its prefix")
+
+    # An ordinary eight-frame tail latent is interpreted as the one-frame latent
+    # at index zero of a fresh LTX sequence. It cannot be appended to the
+    # canonical timeline; official LTX extension code drops it before fusion.
+    extension = extension[:, :, 1:]
+    overlap = prefix_latent_frames - 1
+    alpha = torch.linspace(
+        1.0,
+        0.0,
+        overlap + 2,
+        device=history.device,
+        dtype=torch.float32,
+    )[1:-1].view(1, 1, overlap, 1, 1)
+    blended = (alpha * history[:, :, -overlap:].float() + (1.0 - alpha) * extension[:, :, :overlap].float()).to(
+        history.dtype
+    )
+    return torch.cat(
+        [
+            history[:, :, :-overlap],
+            blended,
+            extension[:, :, overlap:],
+        ],
+        dim=2,
+    )
+
+
 def stereo_audio_window(audio: Audio, drop_frames: int, emit_frames: int, frame_rate: float) -> Audio:
     start = round(drop_frames / frame_rate * audio.sampling_rate)
     end = start + round(emit_frames / frame_rate * audio.sampling_rate)

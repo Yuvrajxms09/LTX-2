@@ -134,8 +134,8 @@ class AvatarConfig:
         generation_latent_frames = (generation.generation_frames - 1) // 8 + 1
         if prefix_latent_frames >= generation_latent_frames:
             raise ValueError("latent-prefix overlap must leave at least one temporal latent to generate")
-        if generation.overlap_strength != 1.0:
-            raise ValueError("generation.overlap_strength must be 1.0 for exact latent-prefix continuation")
+        if generation.overlap_strength > 1.0:
+            raise ValueError("generation.overlap_strength must be at most 1.0 in latent-prefix mode")
 
 
 def _expect_table(data: dict[str, Any], key: str, *, required: bool = True) -> dict[str, Any]:

@@ -10,7 +10,10 @@ It uses a distilled one-stage denoising pass at the requested output resolution:
 2. Encode the relevant external-audio window for each chunk and keep its latent frozen.
 3. Generate the first chunk from the reference image.
 4. Generate following chunks from either the previous decoded tail or an exact clean latent prefix.
-5. Remove the repeated overlap from both video and audio before writing each playable MP4.
+5. In latent-prefix mode, discard the causally reinterpreted first extension latent and
+   fuse the remaining latent overlap into one persistent timeline.
+6. Decode that timeline once into the authoritative combined output. Independently
+   decoded chunk MP4s remain available for delivery and diagnostics.
 
 This is chunked inference, not causal token streaming. A chunk becomes playable
 only after that chunk's denoising, VAE decode, and encoding complete.
@@ -38,10 +41,15 @@ settings intended for avatar experiments are exposed directly:
 
 Latent-prefix overlap must be `8*k+1` because of the causal video-VAE layout.
 Use 17 overlap frames for three temporal latents or 25 overlap frames for four.
-Exact latent-prefix continuation requires `overlap_strength = 1.0`.
+Use `overlap_strength = 1.0` for an exact clean prefix. The official LTX
+extension sampler uses `0.5` as its default soft overlap strength; test it only
+after the exact baseline if motion through the overlap looks frozen or ghosted.
 
 For a 121-frame generation with a 17-frame latent prefix at 25 FPS, the first
 chunk emits 4.84 seconds and each following full chunk adds 4.16 seconds.
+The final duration is rounded to the nearest `8*k+1` frame count representable
+by the causal video VAE. For the 14.4457-second test audio, that is 361 frames
+or 14.44 seconds.
 
 Validate paths and inspect the exact chunk/audio plan without loading models:
 
@@ -80,6 +88,8 @@ Values containing spaces should use TOML quoting:
 The output directory contains:
 
 - `chunk_0000.mp4`, `chunk_0001.mp4`, ...: independently playable emitted chunks.
+- `combined.mp4`: in `latent-prefix` mode, one decode of the fused canonical
+  latent timeline. Use this file for visual quality and seam assessment.
 - `conditioning/`: decoded tail frames used by `image-keyframes` mode.
 - `manifest.json`: chunk plan, progress, output paths, wall throughput, and real-time factor.
 - `metrics.jsonl`: machine-readable phase, denoising-step, memory, and run events.
@@ -142,6 +152,8 @@ In `latent-prefix` mode, `latent_prefix_mae`, `latent_prefix_rmse`, and
 `latent_prefix_max_abs` verify that strength-1 prefix latents survived denoising
 unchanged. Pixel overlap and boundary metrics remain necessary because exact
 latent preservation does not by itself guarantee a seamless causal-VAE decode.
+Each chunk also records `latent_fusion`: the discarded causal-boundary latent,
+the number of blended overlap latents, and the accumulated timeline length.
 
 The runner refuses to write into a non-empty output directory by default, which
 prevents metrics and chunks from different experiments being mixed. Set

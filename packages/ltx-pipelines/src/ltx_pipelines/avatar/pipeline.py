@@ -179,6 +179,7 @@ class AvatarA2VidPipeline:
         context: AvatarPromptContext,
         images: list[ImageConditioningInput],
         prefix_latent: torch.Tensor | None,
+        prefix_strength: float,
         audio_path: str,
         audio_start_time: float,
         seed: int,
@@ -280,7 +281,7 @@ class AvatarA2VidPipeline:
             conditionings = [
                 VideoConditionByLatentIndex(
                     latent=prefix_latent,
-                    strength=1.0,
+                    strength=prefix_strength,
                     latent_idx=0,
                 )
             ]
@@ -289,7 +290,7 @@ class AvatarA2VidPipeline:
                 chunk_index=chunk_index,
                 pixel_frames=(prefix_latent.shape[2] - 1) * 8 + 1,
                 latent=tensor_snapshot(prefix_latent),
-                strength=1.0,
+                strength=prefix_strength,
             )
 
         denoiser = TimedDenoiser(

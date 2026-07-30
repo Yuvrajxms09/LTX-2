@@ -86,14 +86,27 @@ def test_load_avatar_config_rejects_non_aligned_latent_prefix(tmp_path: Path) ->
         )
 
 
-def test_load_avatar_config_requires_exact_latent_prefix_strength(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match=r"overlap_strength must be 1\.0"):
+def test_load_avatar_config_accepts_soft_latent_prefix_strength(tmp_path: Path) -> None:
+    config = load_avatar_config(
+        _write_config(tmp_path),
+        overrides=(
+            'generation.continuation_mode="latent-prefix"',
+            "generation.overlap_frames=17",
+            "generation.overlap_strength=0.5",
+        ),
+    )
+
+    assert config.generation.overlap_strength == 0.5
+
+
+def test_load_avatar_config_rejects_latent_prefix_strength_above_one(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match=r"overlap_strength must be at most 1\.0"):
         load_avatar_config(
             _write_config(tmp_path),
             overrides=(
                 'generation.continuation_mode="latent-prefix"',
                 "generation.overlap_frames=17",
-                "generation.overlap_strength=0.8",
+                "generation.overlap_strength=1.1",
             ),
         )
 

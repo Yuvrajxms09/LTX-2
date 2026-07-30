@@ -290,8 +290,9 @@ has a substantial future region after the clean prefix.
 
 The second and later chunks should log `latent_prefix_ready`. Their manifest
 continuity records should report zero or numerically negligible
-`latent_prefix_max_abs`. Judge visual behavior from the decoded overlap and
-boundary metrics plus the concatenated output, not the latent metric alone.
+`latent_prefix_max_abs`. Judge visual behavior from `combined.mp4`, which is
+decoded once from the fused latent timeline. The individual chunk files are
+diagnostics and are not the authoritative seam-quality result.
 
 Repeat with four temporal latents:
 
@@ -308,6 +309,13 @@ Repeat with four temporal latents:
 
 No conditioning PNGs are written or read in latent-prefix mode. The denoised
 latent tail stays in memory and is cloned directly into the next invocation.
+After each extension, the runner drops the first causally reinterpreted latent,
+linearly fuses the remaining overlap, and appends the new latent suffix.
+
+If the exact prefix shows frozen motion or overlap ghosting, repeat the
+three-latent run with `generation.overlap_strength=0.5`. This is the official
+LTX extension sampler's default soft-conditioning strength; keep every other
+setting and the seed unchanged for a useful A/B comparison.
 
 ## 11. Run the optimized experiment
 

@@ -10,6 +10,17 @@ def latent_frames_for_pixel_prefix(pixel_frames: int) -> int:
     return (pixel_frames - 1) // 8 + 1
 
 
+def nearest_causal_video_frame_count(duration_seconds: float, frame_rate: float) -> int:
+    """Return the nearest positive frame count representable by LTX's causal VAE."""
+    if duration_seconds <= 0:
+        raise ValueError("duration_seconds must be positive")
+    if frame_rate <= 0:
+        raise ValueError("frame_rate must be positive")
+    raw_frames = duration_seconds * frame_rate
+    latent_intervals = max(0, math.floor((raw_frames - 1) / 8 + 0.5))
+    return latent_intervals * 8 + 1
+
+
 @dataclass(frozen=True)
 class AvatarChunk:
     index: int
@@ -39,6 +50,7 @@ def plan_avatar_chunks(
     generation_frames: int,
     overlap_frames: int,
     max_chunks: int | None = None,
+    align_total_frames: bool = False,
 ) -> list[AvatarChunk]:
     if audio_duration_seconds <= 0:
         raise ValueError("audio_duration_seconds must be positive")
@@ -49,7 +61,11 @@ def plan_avatar_chunks(
     if not 0 <= overlap_frames < generation_frames:
         raise ValueError("overlap_frames must be in [0, generation_frames)")
 
-    total_frames = max(1, math.ceil(audio_duration_seconds * frame_rate))
+    total_frames = (
+        nearest_causal_video_frame_count(audio_duration_seconds, frame_rate)
+        if align_total_frames
+        else max(1, math.ceil(audio_duration_seconds * frame_rate))
+    )
     chunks: list[AvatarChunk] = []
     emitted = 0
     index = 0

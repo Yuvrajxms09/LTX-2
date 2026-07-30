@@ -1,8 +1,17 @@
 import pytest
 import torch
 
-from ltx_pipelines.avatar.media import FrameWindow, continuity_metrics, latent_prefix_metrics
-from ltx_pipelines.avatar.planning import latent_frames_for_pixel_prefix, plan_avatar_chunks
+from ltx_pipelines.avatar.media import (
+    FrameWindow,
+    continuity_metrics,
+    fuse_causal_latent_extension,
+    latent_prefix_metrics,
+)
+from ltx_pipelines.avatar.planning import (
+    latent_frames_for_pixel_prefix,
+    nearest_causal_video_frame_count,
+    plan_avatar_chunks,
+)
 
 
 def test_latent_frames_for_pixel_prefix_matches_causal_vae_layout() -> None:
@@ -13,6 +22,11 @@ def test_latent_frames_for_pixel_prefix_matches_causal_vae_layout() -> None:
 def test_latent_frames_for_pixel_prefix_rejects_unaligned_frame_count() -> None:
     with pytest.raises(ValueError, match=r"8\*k \+ 1"):
         latent_frames_for_pixel_prefix(8)
+
+
+def test_nearest_causal_video_frame_count_matches_audio_duration() -> None:
+    assert nearest_causal_video_frame_count(14.4456875, 25) == 361
+    assert nearest_causal_video_frame_count(14.6, 25) == 369
 
 
 def test_plan_avatar_chunks_rewinds_audio_and_only_emits_unique_frames() -> None:
@@ -30,6 +44,19 @@ def test_plan_avatar_chunks_rewinds_audio_and_only_emits_unique_frames() -> None
     assert chunks[1].emitted_start_frame == 49
     assert chunks[1].overlap_frames == 9
     assert chunks[-1].emitted_frames == 32
+    assert sum(chunk.emitted_frames for chunk in chunks) == 361
+
+
+def test_plan_avatar_chunks_aligns_total_for_single_latent_timeline() -> None:
+    chunks = plan_avatar_chunks(
+        audio_duration_seconds=14.4456875,
+        frame_rate=25,
+        generation_frames=121,
+        overlap_frames=17,
+        align_total_frames=True,
+    )
+
+    assert [chunk.emitted_frames for chunk in chunks] == [121, 104, 104, 32]
     assert sum(chunk.emitted_frames for chunk in chunks) == 361
 
 
@@ -51,6 +78,24 @@ def test_frame_window_drops_overlap_caps_output_and_keeps_tail() -> None:
     assert window.first_emitted is not None
     assert window.first_emitted.item() == 2
     assert [frame.item() for frame in window.tail] == [7, 8, 9]
+
+
+def test_fuse_causal_latent_extension_discards_reinterpreted_first_latent() -> None:
+    history = torch.tensor([0.0, 10.0, 20.0, 30.0]).reshape(1, 1, 4, 1, 1)
+    extension = torch.tensor([999.0, 20.0, 30.0, 40.0, 50.0]).reshape(1, 1, 5, 1, 1)
+
+    fused = fuse_causal_latent_extension(history, extension, prefix_latent_frames=3)
+
+    assert fused.flatten().tolist() == [0.0, 10.0, 20.0, 30.0, 40.0, 50.0]
+
+
+def test_fuse_causal_latent_extension_blends_the_remaining_overlap() -> None:
+    history = torch.tensor([0.0, 0.0, 3.0]).reshape(1, 1, 3, 1, 1)
+    extension = torch.tensor([999.0, 9.0, 6.0, 9.0]).reshape(1, 1, 4, 1, 1)
+
+    fused = fuse_causal_latent_extension(history, extension, prefix_latent_frames=2)
+
+    assert fused.flatten().tolist() == [0.0, 0.0, 6.0, 6.0, 9.0]
 
 
 def test_continuity_metrics_compare_overlap_and_boundary() -> None:

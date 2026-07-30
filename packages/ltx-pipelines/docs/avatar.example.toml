@@ -30,8 +30,9 @@ height = 512
 frame_rate = 25.0
 
 # Every model call generates 121 frames. After the first call, the previous
-# three temporal latents are inserted as a clean 17-frame prefix and removed
-# from emitted playback. Use overlap_frames = 25 for four temporal latents.
+# three temporal latents are inserted as a clean 17-frame prefix. The causally
+# reinterpreted first extension latent is discarded and the remaining two are
+# fused into one persistent timeline. Use 25 for a four-latent prefix.
 generation_frames = 121
 overlap_frames = 17
 continuation_mode = "latent-prefix"
