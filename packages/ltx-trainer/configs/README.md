@@ -21,6 +21,7 @@ adjust paths, dataset, and hyperparameters.
 | **Video Extension**   | Generated | Generated | `prefix`/`suffix`   | [`video_extend_lora.yaml`](./video_extend_lora.yaml) (forward), [`video_suffix_lora.yaml`](./video_suffix_lora.yaml) (backward) |
 | **V2V IC-LoRA**       | Generated | —         | `reference`         | [`v2v_ic_lora.yaml`](./v2v_ic_lora.yaml) |
 | **A2V**               | Generated | Frozen    | —                   | [`a2v_lora.yaml`](./a2v_lora.yaml) |
+| **A2V lip-sync**      | Generated | Frozen    | `first_frame`       | [`a2v_lipsync_lora.yaml`](./a2v_lipsync_lora.yaml) |
 | **V2A (Foley)**       | Frozen    | Generated | —                   | [`v2a_lora.yaml`](./v2a_lora.yaml) |
 | **Video Inpainting**  | Generated | —         | `mask`              | [`video_inpainting_lora.yaml`](./video_inpainting_lora.yaml) |
 | **Video Outpainting** | Generated | —         | `spatial_crop`      | [`video_outpainting_lora.yaml`](./video_outpainting_lora.yaml) |

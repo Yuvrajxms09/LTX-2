@@ -32,6 +32,7 @@ Before diving into individual modes, here are the core ideas behind the flexible
 | **Video Extension**   | Generated | Generated | `prefix`/`suffix`   | [`video_extend_lora`](../configs/video_extend_lora.yaml) |
 | **V2V IC-LoRA**       | Generated | —         | `reference`         | [`v2v_ic_lora`](../configs/v2v_ic_lora.yaml) |
 | **A2V**               | Generated | Frozen    | —                   | [`a2v_lora`](../configs/a2v_lora.yaml) |
+| **A2V lip-sync**      | Generated | Frozen    | `first_frame`       | [`a2v_lipsync_lora`](../configs/a2v_lipsync_lora.yaml) |
 | **V2A (Foley)**       | Frozen    | Generated | —                   | [`v2a_lora`](../configs/v2a_lora.yaml) |
 | **Video Inpainting**  | Generated | —         | `mask`              | [`video_inpainting_lora`](../configs/video_inpainting_lora.yaml) |
 | **Video Outpainting** | Generated | —         | `spatial_crop`      | [`video_outpainting_lora`](../configs/video_outpainting_lora.yaml) |
@@ -241,6 +242,43 @@ training_strategy:
 ```
 
 **Example config:** 📄 [a2v_lora.yaml](../configs/a2v_lora.yaml)
+
+### A2V lip-sync with an image identity
+
+This is the configuration for image + speech → talking-head video. It combines
+the A2V mode with an always-on `first_frame` condition:
+
+```yaml
+training_strategy:
+  name: "flexible"
+  video:
+    is_generated: true
+    latents_dir: "latents"
+    conditions:
+      - type: first_frame
+        probability: 1.0
+  audio:
+    is_generated: false
+    latents_dir: "audio_latents"
+```
+
+The training target is still the full paired video. The first frame is clean and
+excluded from loss; the remaining video tokens carry the loss. No separate image
+column is required because the trainer derives this intrinsic condition from the
+target video's first frame. At inference, `first_frame` is replaced by the user's
+image and `audio_to_video` supplies the user's speech.
+
+Use [`a2v_lipsync_lora.yaml`](../configs/a2v_lipsync_lora.yaml). Its attention
+targets are the video self/text paths plus the video-query/audio-key-value
+cross-modal path. It deliberately excludes trainable reverse video→audio
+adapters for this first causal experiment: the native reverse path still runs
+in the frozen base model and can influence later video blocks indirectly, but
+adapting it could create a video-to-audio feedback shortcut.
+
+For preprocessing, a `video` + `caption` manifest is the safest paired-data form:
+the dataset processor extracts audio from that same video and aligns it to the
+selected video bucket. A separate `audio` column is valid only when its start time
+and duration are exactly aligned with the video.
 
 ---
 
@@ -507,7 +545,7 @@ training_strategy:
 The `target_modules` configuration determines which transformer modules receive LoRA adapters. The right choice depends
 on whether your training involves cross-modal (audio ↔ video) interaction.
 
-**For T2V, I2V, A2V, V2A, or any mode involving both modalities** — use short patterns to match all branches
+**For general T2V, I2V, A2V, V2A, or any mode involving both modalities** — use short patterns to match all branches
 (video, audio, and cross-modal attention):
 
 ```yaml
@@ -524,6 +562,11 @@ target_modules:
 > `video_to_audio_attn.to_k`). The cross-modal attention modules enable bidirectional information flow between
 > audio and video, which is critical for synchronized audiovisual generation.
 > See [Understanding Target Modules](configuration-reference.md#understanding-target-modules) for detailed guidance.
+
+For the specialized **A2V lip-sync** case, audio is deliberately kept clean and video is the only supervised output. The
+[`a2v_lipsync_lora.yaml`](../configs/a2v_lipsync_lora.yaml) profile targets video attention and the
+video-query/audio-key-value path, while omitting trainable `video_to_audio_attn` adapters to keep the first
+experiment causally focused and avoid a possible reverse-feedback shortcut. The base reverse path still executes.
 
 **For video-only IC-LoRA** — explicitly target video modules (including FFN layers for better transformation quality):
 

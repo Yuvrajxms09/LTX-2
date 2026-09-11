@@ -95,6 +95,7 @@ class TrainingStepOutput:
 class LtxvTrainer:
     def __init__(self, trainer_config: LtxTrainerConfig) -> None:
         self._config = trainer_config
+        self._batch_diagnostics_logged = False
         if IS_MAIN_PROCESS:
             print_config(trainer_config)
         self._training_strategy = get_training_strategy(self._config.training_strategy)
@@ -123,6 +124,7 @@ class LtxvTrainer:
         self._loaded_checkpoint_path: Path | None = None
         self._load_checkpoint()
         self._prepare_models_for_training()
+        self._log_runtime_setup()
         self._dataset = None
         self._global_step = -1
         self._checkpoint_paths: list[Path] = []
@@ -229,12 +231,30 @@ class LtxvTrainer:
                         self._global_step += 1
 
                     output = self._training_step(batch)
+                    if self._config.diagnostics.fail_on_non_finite and not torch.isfinite(output.loss).all():
+                        raise FloatingPointError(
+                            f"Non-finite training loss at global step {self._global_step}: "
+                            f"{output.loss.detach().float().cpu().tolist()}"
+                        )
                     self._accelerator.backward(output.loss.mean())
 
+                    grad_norm: float | None = None
                     if self._accelerator.sync_gradients and cfg.optimization.max_grad_norm > 0:
-                        self._accelerator.clip_grad_norm_(
+                        raw_grad_norm = self._accelerator.clip_grad_norm_(
                             self._trainable_params,
                             cfg.optimization.max_grad_norm,
+                        )
+                        grad_norm = float(raw_grad_norm.detach().cpu())
+                    elif (
+                        is_optimization_step
+                        and cfg.diagnostics.log_gradient_stats
+                        and self._should_trace_step(self._global_step)
+                    ):
+                        grad_norm = self._compute_gradient_norm()
+
+                    if cfg.diagnostics.fail_on_non_finite and grad_norm is not None and not math.isfinite(grad_norm):
+                        raise FloatingPointError(
+                            f"Non-finite gradient norm at global step {self._global_step}: {grad_norm}"
                         )
 
                     self._optimizer.step()
@@ -292,8 +312,19 @@ class LtxvTrainer:
                             "train/step_time": step_time,
                             "train/global_step": self._global_step,
                         }
+                        if grad_norm is not None and cfg.diagnostics.log_gradient_stats:
+                            metrics["train/gradient_norm"] = grad_norm
                         metrics.update(self._sigma_tracker.get_metrics())
                         self._log_metrics(metrics)
+
+                        if self._should_trace_step(self._global_step):
+                            self._log_training_trace(
+                                step_time=step_time,
+                                loss=step_loss,
+                                learning_rate=current_lr,
+                                sigma=output.sigma,
+                                gradient_norm=grad_norm,
+                            )
 
                     # Fallback logging when progress bars are disabled
                     if disable_progress_bars and IS_MAIN_PROCESS and self._global_step % 20 == 0:
@@ -362,8 +393,11 @@ class LtxvTrainer:
 
         return saved_path, stats
 
-    def _training_step(self, batch: dict[str, dict[str, Tensor]]) -> TrainingStepOutput:
+    def _training_step(self, batch: dict[str, Any]) -> TrainingStepOutput:
         """Perform a single training step using the configured strategy."""
+        if self._config.diagnostics.log_batch_shapes:
+            self._log_batch_diagnostics(batch)
+
         # Apply embedding connectors to transform pre-computed text embeddings
         conditions = batch["conditions"]
 
@@ -460,7 +494,13 @@ class LtxvTrainer:
             raise ValueError(f"Unknown training mode: {self._config.model.training_mode}")
 
         self._trainable_params = [p for p in self._transformer.parameters() if p.requires_grad]
-        logger.debug(f"Trainable params count: {sum(p.numel() for p in self._trainable_params):,}")
+        trainable_count = sum(p.numel() for p in self._trainable_params)
+        total_count = sum(p.numel() for p in self._transformer.parameters())
+        trainable_ratio = trainable_count / total_count if total_count else 0.0
+        logger.info(
+            f"Parameter audit: trainable={trainable_count:,}, total={total_count:,}, "
+            f"trainable_ratio={trainable_ratio:.6%}"
+        )
 
     def _init_timestep_sampler(self) -> None:
         """Initialize the timestep sampler based on the config."""
@@ -469,17 +509,209 @@ class LtxvTrainer:
 
     def _setup_lora(self) -> None:
         """Configure LoRA adapters for the transformer. Only called in LoRA training mode."""
-        logger.debug(f"Adding LoRA adapter with rank {self._config.lora.rank}")
+        lora_config = self._config.lora
+        if lora_config is None:
+            raise ValueError("LoRA training requires a lora configuration")
+
+        weighted_module_names = [
+            name
+            for name, module in self._transformer.named_modules()
+            if name and hasattr(module, "weight")
+        ]
+        matched_by_target = {
+            target: [
+                name for name in weighted_module_names if name == target or name.endswith(f".{target}")
+            ]
+            for target in lora_config.target_modules
+        }
+        unmatched_targets = [target for target, matches in matched_by_target.items() if not matches]
+        matched_module_names = sorted({name for matches in matched_by_target.values() for name in matches})
+        if not matched_module_names:
+            raise ValueError(
+                "LoRA target audit found no matching weighted modules. "
+                f"Requested targets: {lora_config.target_modules}"
+            )
+
+        logger.info(
+            f"LoRA target audit: requested={len(lora_config.target_modules)}, "
+            f"matched_weighted_modules={len(matched_module_names)}, "
+            f"rank={lora_config.rank}, alpha={lora_config.alpha}, dropout={lora_config.dropout}"
+        )
+        if unmatched_targets:
+            raise ValueError(
+                "LoRA target audit failed: these target patterns matched no weighted modules: "
+                f"{unmatched_targets}"
+            )
+        logger.debug(f"LoRA matched modules: {matched_module_names}")
+
         lora_config = LoraConfig(
-            r=self._config.lora.rank,
-            lora_alpha=self._config.lora.alpha,
-            target_modules=self._config.lora.target_modules,
-            lora_dropout=self._config.lora.dropout,
+            r=lora_config.rank,
+            lora_alpha=lora_config.alpha,
+            target_modules=lora_config.target_modules,
+            lora_dropout=lora_config.dropout,
             init_lora_weights=True,
         )
         # Wrap the transformer with PEFT to add LoRA layers
         # noinspection PyTypeChecker
         self._transformer = get_peft_model(self._transformer, lora_config)
+
+        applied_module_names = sorted(
+            name for name, module in self._transformer.named_modules() if isinstance(module, BaseTunerLayer)
+        )
+        if not applied_module_names:
+            raise RuntimeError("PEFT created no LoRA tuner layers after target audit")
+        logger.info(f"LoRA application audit: tuner_layers={len(applied_module_names)}")
+        logger.debug(f"LoRA tuner layers: {applied_module_names}")
+
+        reverse_cross_attention = [name for name in applied_module_names if "video_to_audio_attn" in name]
+        if reverse_cross_attention:
+            logger.info(
+                "LoRA is attached to video_to_audio_attn. The native reverse path can influence later "
+                "video blocks indirectly; verify that this is intentional for the selected training "
+                f"profile: {reverse_cross_attention}"
+            )
+
+    def _log_runtime_setup(self) -> None:
+        """Log the resolved runtime and modality contract before the first batch."""
+        cfg = self._config
+        scale_factors = self._training_strategy.video_scale_factors
+        strategy = cfg.training_strategy
+        video_config = getattr(strategy, "video", None)
+        audio_config = getattr(strategy, "audio", None)
+        video_conditions = [condition.type for condition in video_config.conditions] if video_config else []
+        audio_conditions = [condition.type for condition in audio_config.conditions] if audio_config else []
+
+        logger.info(
+            "Runtime audit: "
+            f"device={self._accelerator.device}, processes={self._accelerator.num_processes}, "
+            f"torch={torch.__version__}, cuda_available={torch.cuda.is_available()}, "
+            "video_scale_factors="
+            f"(height={scale_factors.height}, width={scale_factors.width}, time={scale_factors.time})"
+        )
+        logger.info(
+            "Modality contract: "
+            f"video_generated={video_config.is_generated if video_config else False}, "
+            f"video_conditions={video_conditions}, "
+            f"audio_generated={audio_config.is_generated if audio_config else False}, "
+            f"audio_conditions={audio_conditions}"
+        )
+        logger.info(
+            "Diagnostics contract: "
+            f"trace_every_n_steps={cfg.diagnostics.trace_every_n_steps}, "
+            f"batch_shapes={cfg.diagnostics.log_batch_shapes}, "
+            f"gradient_stats={cfg.diagnostics.log_gradient_stats}, "
+            f"fail_on_non_finite={cfg.diagnostics.fail_on_non_finite}"
+        )
+
+    @staticmethod
+    def _summarize_batch_value(value: object) -> str:
+        """Return a compact, recursive description of a collated batch value."""
+        if isinstance(value, Tensor):
+            return f"Tensor(shape={tuple(value.shape)}, dtype={value.dtype}, device={value.device})"
+        if isinstance(value, dict):
+            fields = ", ".join(f"{key}={LtxvTrainer._summarize_batch_value(item)}" for key, item in value.items())
+            return "{" + fields + "}"
+        if isinstance(value, (list, tuple)):
+            if len(value) > 8:
+                return f"{type(value).__name__}(len={len(value)})"
+            return repr(value)
+        return repr(value)
+
+    @staticmethod
+    def _as_float_list(value: object) -> list[float]:
+        """Convert scalar metadata from a collated batch into a flat list."""
+        if isinstance(value, Tensor):
+            return [float(item) for item in value.detach().cpu().reshape(-1).tolist()]
+        if isinstance(value, (list, tuple)):
+            return [float(item) for item in value]
+        if isinstance(value, (int, float)):
+            return [float(value)]
+        return []
+
+    def _log_batch_diagnostics(self, batch: dict[str, object]) -> None:
+        """Log the first loaded batch and verify paired video/audio duration metadata."""
+        if self._batch_diagnostics_logged:
+            return
+        self._batch_diagnostics_logged = True
+
+        logger.info(f"First batch audit: keys={sorted(batch)}")
+        for key, value in batch.items():
+            logger.debug(f"First batch field '{key}': {self._summarize_batch_value(value)}")
+
+        video_data = batch.get("video_latents")
+        audio_data = batch.get("audio_latents")
+        if not isinstance(video_data, dict) or not isinstance(audio_data, dict):
+            logger.warning(
+                "First batch alignment audit skipped: expected video_latents and audio_latents dictionaries."
+            )
+            return
+
+        num_frames = self._as_float_list(video_data.get("num_frames"))
+        fps = self._as_float_list(video_data.get("fps"))
+        audio_duration = self._as_float_list(audio_data.get("duration"))
+        scale_time = self._training_strategy.video_scale_factors.time
+        if not num_frames or not fps or not audio_duration:
+            logger.warning(
+                "First batch alignment audit skipped: missing num_frames, fps, or audio duration metadata."
+            )
+            return
+
+        expected_duration = [
+            ((frames - 1.0) * scale_time + 1.0) / rate
+            for frames, rate in zip(num_frames, fps, strict=True)
+        ]
+        paired = list(zip(expected_duration, audio_duration, strict=True))
+        max_error = max(abs(expected - actual) for expected, actual in paired)
+        logger.info(
+            "First batch alignment audit: "
+            f"expected_video_duration_s={[round(value, 4) for value in expected_duration]}, "
+            f"audio_duration_s={[round(value, 4) for value in audio_duration]}, "
+            f"max_abs_error_s={max_error:.4f}"
+        )
+        if max_error > 0.1:
+            logger.warning(
+                "Video/audio duration mismatch exceeds 100 ms in the first batch. "
+                "Check source trimming and preprocessing bucket alignment before training."
+            )
+
+    def _compute_gradient_norm(self) -> float:
+        """Compute the global L2 norm of currently available trainable gradients."""
+        squared_norms = [
+            torch.linalg.vector_norm(parameter.grad.detach().float(), ord=2).pow(2)
+            for parameter in self._trainable_params
+            if parameter.grad is not None
+        ]
+        if not squared_norms:
+            return 0.0
+        return float(torch.sqrt(torch.stack(squared_norms).sum()).cpu())
+
+    def _should_trace_step(self, step: int) -> bool:
+        """Return whether a human-readable optimization trace should be emitted."""
+        return step == 1 or step % self._config.diagnostics.trace_every_n_steps == 0
+
+    def _log_training_trace(
+        self,
+        *,
+        step_time: float,
+        loss: float,
+        learning_rate: float,
+        sigma: Tensor,
+        gradient_norm: float | None,
+    ) -> None:
+        """Emit a compact periodic trace without synchronizing large model tensors."""
+        sigma_values = sigma.detach().float().cpu()
+        trace = (
+            f"Training trace: step={self._global_step}/{self._config.optimization.steps}, "
+            f"loss={loss:.6f}, lr={learning_rate:.3e}, step_time_s={step_time:.3f}, "
+            f"sigma_range=({sigma_values.min().item():.4f}, {sigma_values.max().item():.4f})"
+        )
+        if gradient_norm is not None:
+            trace += f", gradient_norm={gradient_norm:.6f}"
+        if torch.cuda.is_available():
+            allocated = torch.cuda.memory_allocated(self._accelerator.device) / 1024**3
+            reserved = torch.cuda.memory_reserved(self._accelerator.device) / 1024**3
+            trace += f", cuda_allocated_gb={allocated:.2f}, cuda_reserved_gb={reserved:.2f}"
+        logger.info(trace)
 
     def _load_checkpoint(self) -> None:
         """Load checkpoint if specified in config, then resolve resume state."""
@@ -679,7 +911,12 @@ class LtxvTrainer:
             data_sources = self._config.training_strategy.get_data_sources()
 
             self._dataset = PrecomputedDataset(self._config.data.preprocessed_data_root, data_sources=data_sources)
-            logger.debug(f"Loaded dataset with {len(self._dataset):,} samples from sources: {list(data_sources)}")
+            source_counts = {key: len(files) for key, files in self._dataset.sample_files.items()}
+            logger.info(
+                f"Dataset audit: root={self._dataset.data_root}, samples={len(self._dataset):,}, "
+                f"sources={list(data_sources)}"
+            )
+            logger.debug(f"Dataset source sample counts: {source_counts}")
 
         num_workers = self._config.data.num_dataloader_workers
         dataloader = DataLoader(
@@ -706,6 +943,15 @@ class LtxvTrainer:
         opt_cfg = self._config.optimization
 
         lr = opt_cfg.learning_rate
+        effective_batch_size = (
+            opt_cfg.batch_size
+            * opt_cfg.gradient_accumulation_steps
+            * self._accelerator.num_processes
+        )
+        logger.info(
+            f"Optimizer audit: type={opt_cfg.optimizer_type}, lr={lr:.3e}, scheduler={opt_cfg.scheduler_type}, "
+            f"steps={opt_cfg.steps}, effective_batch_size={effective_batch_size}"
+        )
         if opt_cfg.optimizer_type == "adamw":
             optimizer = AdamW(self._trainable_params, lr=lr)
         elif opt_cfg.optimizer_type == "adamw8bit":

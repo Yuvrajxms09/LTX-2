@@ -1,0 +1,183 @@
+# =============================================================================
+# LTX-2.5 image + speech -> talking-head video LoRA
+# =============================================================================
+#
+# This is the focused A2V profile for the target use case:
+#
+#   first frame / image identity + paired speech audio -> generated video
+#
+# The video is the only generated modality. Audio stays clean and frozen, so
+# the loss is applied to the target video while the model learns to use the
+# audio stream through audio-to-video attention. The first_frame condition is
+# applied to every training sample: the target video's first frame is the
+# image-conditioning signal during training.
+#
+# Dataset output expected by this config:
+#   preprocessed_data_root/
+#   ├── latents/        # target video latents
+#   ├── audio_latents/  # paired speech audio latents
+#   └── conditions/     # caption embeddings
+#
+# For paired source videos, prefer a dataset manifest containing `video` and
+# `caption` only. process_dataset.py then extracts the audio from the same
+# video and trims/pads it to the selected video bucket, preserving alignment.
+# Use an explicit `audio` column only when its start time and duration are
+# known to match the video exactly.
+#
+# =============================================================================
+
+model:
+  # LTX-2.5 transformer safetensors from the split pack, or a unified checkpoint.
+  model_path: "path/to/ltx-2.5-transformer.safetensors"
+
+  # Matching Gemma text encoder directory or split-pack text-encoder safetensors.
+  text_encoder_path: "path/to/gemma-text-encoder"
+
+  # Required for an LTX-2.5 split pack; omit these two fields for a unified checkpoint.
+  video_vae_path: "path/to/ltx-2.5-video-vae.safetensors"
+  audio_vae_path: "path/to/ltx-2.5-audio-vae.safetensors"
+
+  training_mode: "lora"
+  load_checkpoint: null
+
+lora:
+  # Rank 32 is enough capacity for the first native experiment without making
+  # a very small talking-head set unnecessarily easy to memorize.
+  rank: 32
+  alpha: 32
+  dropout: 0.0
+
+  # The attn1/attn2 groups cover video self-attention and video-to-text
+  # cross-attention. They do not target audio self/text attention. The explicit
+  # A2V group is the critical path: Q comes from video and K/V come from audio.
+  #
+  # Do not use the broad "to_k"/"to_q"/"to_v" patterns here: they also attach
+  # LoRA to audio self/text and video_to_audio_attn. Reverse V2A still executes
+  # in the frozen base model and can affect later video blocks indirectly, but
+  # excluding its adapter keeps this first experiment causally focused on A2V
+  # and reduces the risk of a video-to-audio feedback shortcut.
+  target_modules:
+    - "attn1.to_k"
+    - "attn1.to_q"
+    - "attn1.to_v"
+    - "attn1.to_out.0"
+    - "attn2.to_k"
+    - "attn2.to_q"
+    - "attn2.to_v"
+    - "attn2.to_out.0"
+    - "audio_to_video_attn.to_k"
+    - "audio_to_video_attn.to_q"
+    - "audio_to_video_attn.to_v"
+    - "audio_to_video_attn.to_out.0"
+
+training_strategy:
+  name: "flexible"
+
+  video:
+    is_generated: true
+    latents_dir: "latents"
+    conditions:
+      # This must be 1.0 for the intended inference contract: every generated
+      # clip starts from a supplied image rather than sometimes training T2V.
+      - type: first_frame
+        probability: 1.0
+
+  audio:
+    is_generated: false
+    latents_dir: "audio_latents"
+
+optimization:
+  # 1,000 steps is a useful first experiment inside the documented 500–2,000
+  # step LoRA range. Re-evaluate against held-out speakers before increasing it.
+  learning_rate: 1e-4
+  steps: 1000
+  batch_size: 1
+  gradient_accumulation_steps: 1
+  max_grad_norm: 1.0
+  optimizer_type: "adamw"
+  scheduler_type: "linear"
+  scheduler_params: { }
+  enable_gradient_checkpointing: true
+
+acceleration:
+  mixed_precision_mode: "bf16"
+  quantization: null
+  load_text_encoder_in_8bit: false
+  offload_optimizer_during_validation: false
+
+data:
+  # Must contain latents/, audio_latents/, and conditions/ after preprocessing.
+  preprocessed_data_root: "/path/to/preprocessed/data"
+  num_dataloader_workers: 2
+
+validation:
+  # Replace these with a held-out image and speech recording before training.
+  # Keeping validation outside the training clips is required to tell genuine
+  # audio-to-mouth learning from memorization.
+  samples:
+    - prompt: >-
+        A close-up talking-head video of a person looking directly into the camera
+        and speaking naturally with expressive but controlled facial movement.
+      conditions:
+        - type: first_frame
+          image_or_video: "/path/to/validation/identity.png"
+        - type: audio_to_video
+          audio: "/path/to/validation/speech.wav"
+
+  negative_prompt: >-
+    blurry, out of focus, flickering, motion blur, distorted proportions,
+    deformed facial features, asymmetrical face, unnatural skin tones,
+    mismatched lip sync, mouth deformation, off-sync audio, added dialogue,
+    robotic voice, background noise, camera shake, inconsistent framing,
+    jittery movement, or AI artifacts.
+
+  # Single bucket keeps batching and comparisons deterministic. This matches
+  # the native talking-head profile's 1280x704 landscape geometry. 153 frames
+  # is VAE-aligned and gives about 6.1 seconds at 25 fps. If the selected GPU
+  # cannot fit this sequence, reduce both this value and preprocessing to
+  # 960x544x153; do not mix bucket shapes in one first experiment.
+  video_dims: [ 1280, 704, 153 ]
+  frame_rate: 25.0
+  seed: 42
+  inference_steps: 30
+  interval: 100
+  video_cfg_scale: 3.0
+  audio_cfg_scale: 1.0
+  video_stg_scale: 1.0
+  audio_stg_scale: 0.0
+  stg_blocks: [ 28 ]
+  guidance_rescale: 0.7
+  video_modality_guidance_scale: 3.0
+  audio_modality_guidance_scale: 1.0
+  generate_audio: false
+  generate_video: true
+  skip_initial_validation: false
+
+checkpoints:
+  interval: 100
+  keep_last_n: -1
+  precision: "bfloat16"
+
+flow_matching:
+  timestep_sampling_mode: "shifted_logit_normal"
+  timestep_sampling_params: { }
+
+hub:
+  push_to_hub: false
+  hub_model_id: null
+
+wandb:
+  enabled: false
+  project: "ltx-2-trainer"
+  entity: null
+  tags: [ "ltx2.5", "lora", "a2v", "lipsync" ]
+  log_validation_videos: true
+
+diagnostics:
+  trace_every_n_steps: 20
+  log_batch_shapes: true
+  log_gradient_stats: true
+  fail_on_non_finite: true
+
+seed: 42
+output_dir: "outputs/a2v_lipsync_lora"

@@ -86,6 +86,7 @@ See [Dataset Preparation](dataset-preparation.md) for detailed instructions.
 Create or modify a configuration YAML file. Start with one of the example configs:
 
 - [`configs/t2v_lora.yaml`](../configs/t2v_lora.yaml) - Text-to-video LoRA
+- [`configs/a2v_lipsync_lora.yaml`](../configs/a2v_lipsync_lora.yaml) - Image + speech to talking-head LoRA
 - [`configs/t2v_lora_low_vram.yaml`](../configs/t2v_lora_low_vram.yaml) - Same as above, tuned for ~32GB VRAM (INT8 quantization and memory optimizations)
 - [`configs/v2v_ic_lora.yaml`](../configs/v2v_ic_lora.yaml) - IC-LoRA video-to-video
 
@@ -122,6 +123,10 @@ See [Configuration Reference](configuration-reference.md) for all available opti
 uv run python scripts/train.py configs/t2v_lora.yaml
 ```
 
+For a single-GPU Colab run, invoke `scripts/train.py` directly as above; do not use the repository's multi-GPU
+Accelerate configs. The lip-sync profile is already batch-size 1 and uses the native LTX-2.5 split-pack component
+paths. Keep `mixed_precision: bf16` and `quantization: null` when the selected GPU has sufficient VRAM.
+
 For multi-GPU training:
 
 ```bash
@@ -146,6 +151,7 @@ The trainer supports several training modes:
 | **Video Extension**   | Extend videos temporally (forward/backward)| [`video_extend_lora.yaml`](../configs/video_extend_lora.yaml), [`video_suffix_lora.yaml`](../configs/video_suffix_lora.yaml) |
 | **IC-LoRA (V2V)**     | Video-to-video transformations             | [`v2v_ic_lora.yaml`](../configs/v2v_ic_lora.yaml)                |
 | **Audio-to-Video**    | Generate video conditioned on audio        | [`a2v_lora.yaml`](../configs/a2v_lora.yaml)                      |
+| **A2V lip-sync**      | Generate talking-head video from image+speech | [`a2v_lipsync_lora.yaml`](../configs/a2v_lipsync_lora.yaml)    |
 | **Video-to-Audio**    | Generate audio/foley from video            | [`v2a_lora.yaml`](../configs/v2a_lora.yaml)                      |
 | **Video Inpainting**  | Fill in masked regions of video            | [`video_inpainting_lora.yaml`](../configs/video_inpainting_lora.yaml) |
 | **Video Outpainting** | Extend video spatially                     | [`video_outpainting_lora.yaml`](../configs/video_outpainting_lora.yaml) |

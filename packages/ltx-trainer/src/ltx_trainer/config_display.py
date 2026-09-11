@@ -91,7 +91,10 @@ def print_config(config: LtxTrainerConfig) -> None:
             (
                 "🎥 Validation",
                 [
-                    ("Prompts", f"{len(val.prompts)} prompt(s)" if val.prompts else "[dim]—[/]"),
+                    (
+                        "Samples",
+                        f"{len(val.samples)} sample(s)" if val.samples else "[dim]—[/]",
+                    ),
                     ("Interval", f"Every {val.interval} steps" if val.interval else "[dim]Disabled[/]"),
                     ("Video Dims", f"{val.video_dims[0]}x{val.video_dims[1]}, {val.video_dims[2]} frames"),
                     ("Frame Rate", f"{val.frame_rate} fps"),
@@ -131,6 +134,15 @@ def print_config(config: LtxTrainerConfig) -> None:
                     ),
                     ("W&B", f"{cfg.wandb.project}" if cfg.wandb.enabled else "[dim]Disabled[/]"),
                     ("HF Hub", cfg.hub.hub_model_id if cfg.hub.push_to_hub else "[dim]Disabled[/]"),
+                ],
+            ),
+            (
+                "🔎 Diagnostics",
+                [
+                    ("Trace Every", f"{cfg.diagnostics.trace_every_n_steps} steps"),
+                    ("Batch Shapes", fmt(cfg.diagnostics.log_batch_shapes)),
+                    ("Gradient Stats", fmt(cfg.diagnostics.log_gradient_stats)),
+                    ("Fail on Non-finite", fmt(cfg.diagnostics.fail_on_non_finite)),
                 ],
             ),
         ]

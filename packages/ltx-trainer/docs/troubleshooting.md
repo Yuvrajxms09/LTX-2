@@ -271,8 +271,11 @@ checkpoints need their own one-stage sampling recipe. The production two-stage d
    music).
 
 5. **Check target modules:**
-   Ensure your `target_modules` configuration matches your training goals. For audio-video training,
-   use patterns that match both branches (e.g., `"to_k"` instead of `"attn1.to_k"`).
+   Ensure your `target_modules` configuration matches your training goals. For general audio-video training,
+   use patterns that match both branches (e.g., `"to_k"`). For image + speech lip-sync with frozen audio,
+   use the focused targets in [`a2v_lipsync_lora.yaml`](../configs/a2v_lipsync_lora.yaml), which exclude trainable
+   reverse video-to-audio adapters for causal focus and to reduce a possible video-to-audio feedback shortcut. The
+   native reverse path still executes in the frozen base model and can influence later video blocks indirectly.
    See [Understanding Target Modules](configuration-reference.md#understanding-target-modules) for details.
 
 6. **Adjust LoRA rank:**

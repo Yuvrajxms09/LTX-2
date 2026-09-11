@@ -18,6 +18,7 @@ sub-configurations:
 - **CheckpointsConfig**: Checkpoint saving frequency and retention settings
 - **HubConfig**: Hugging Face Hub integration settings
 - **WandbConfig**: Weights & Biases logging settings
+- **DiagnosticsConfig**: Periodic traces and numerical-failure checks
 - **FlowMatchingConfig**: Timestep sampling parameters
 
 ## 📄 Example Configuration Files
@@ -28,6 +29,7 @@ Check out our example configurations in the `configs` directory:
 - 📄 [Image-to-Video LoRA](../configs/i2v_lora.yaml) - Image-to-video LoRA training
 - 📄 [IC-LoRA Video-to-Video](../configs/v2v_ic_lora.yaml) - IC-LoRA video-to-video training
 - 📄 [Audio-to-Video LoRA](../configs/a2v_lora.yaml) - Audio-to-video LoRA training
+- 📄 [A2V lip-sync LoRA](../configs/a2v_lipsync_lora.yaml) - Image + speech to talking-head video training
 - 📄 [Video-to-Audio LoRA](../configs/v2a_lora.yaml) - Video-to-audio (Foley) LoRA training
 - 📄 [Video Extension LoRA](../configs/video_extend_lora.yaml) - Video extension (forward) LoRA training
 - 📄 [Video Suffix LoRA](../configs/video_suffix_lora.yaml) - Video extension (backward) LoRA training
@@ -501,6 +503,24 @@ flow_matching:
 |----------------------------|------------------------------------------------------------|
 | `timestep_sampling_mode`   | Sampling strategy: `"uniform"` or `"shifted_logit_normal"` |
 | `timestep_sampling_params` | Additional parameters for the sampling strategy            |
+
+### DiagnosticsConfig
+
+Runtime checks for tracing a training run. These diagnostics do not change the
+training objective.
+
+```yaml
+diagnostics:
+  trace_every_n_steps: 20
+  log_batch_shapes: true
+  log_gradient_stats: true
+  fail_on_non_finite: true
+```
+
+The trainer audits the resolved LoRA targets, modality contract, first batch
+shapes, paired video/audio duration metadata, periodic loss/sigma/gradient/memory
+values, and checkpoint/validation transitions. `fail_on_non_finite` raises at the
+first non-finite loss or gradient norm so a bad batch cannot silently corrupt a run.
 
 ### General Configuration
 

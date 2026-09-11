@@ -779,6 +779,31 @@ class FlowMatchingConfig(ConfigBaseModel):
     )
 
 
+class DiagnosticsConfig(ConfigBaseModel):
+    """Runtime diagnostics for tracing data, gradients, and numerical failures."""
+
+    trace_every_n_steps: int = Field(
+        default=20,
+        ge=1,
+        description="Emit a structured training trace every N optimization steps",
+    )
+
+    log_batch_shapes: bool = Field(
+        default=True,
+        description="Log the first batch's source keys, shapes, dtypes, and alignment metadata",
+    )
+
+    log_gradient_stats: bool = Field(
+        default=True,
+        description="Include gradient norm and GPU memory in periodic training traces",
+    )
+
+    fail_on_non_finite: bool = Field(
+        default=True,
+        description="Fail immediately when loss or gradient norm becomes NaN or infinite",
+    )
+
+
 class LtxTrainerConfig(ConfigBaseModel):
     """Unified configuration for LTX family training."""
 
@@ -797,6 +822,7 @@ class LtxTrainerConfig(ConfigBaseModel):
     hub: HubConfig = Field(default_factory=HubConfig)
     flow_matching: FlowMatchingConfig = Field(default_factory=FlowMatchingConfig)
     wandb: WandbConfig = Field(default_factory=WandbConfig)
+    diagnostics: DiagnosticsConfig = Field(default_factory=DiagnosticsConfig)
 
     # General configuration
     seed: int = Field(
