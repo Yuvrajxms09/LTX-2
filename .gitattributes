@@ -10,3 +10,13 @@ packages/ltx-pipelines/tests/assets/*.wav filter=lfs diff=lfs merge=lfs -text
 *.jpg filter=lfs diff=lfs merge=lfs -text
 *.webp filter=lfs diff=lfs merge=lfs -text
 *.exr filter=lfs diff=lfs merge=lfs -text
+
+# The public GitHub fork cannot upload new LFS objects. The small, reproducible
+# lip-sync smoke dataset is kept as ordinary Git blobs (all files are below
+# GitHub's per-file limit); keep the repository-wide LFS rules above unchanged.
+datasets/training_clips_612/*.mp4 -filter -diff -merge -text
+datasets/training_clips_612/**/*.mp4 -filter -diff -merge -text
+datasets/training_clips_612/*.png -filter -diff -merge -text
+datasets/training_clips_612/**/*.png -filter -diff -merge -text
+datasets/training_clips_612/*.jpg -filter -diff -merge -text
+datasets/training_clips_612/**/*.jpg -filter -diff -merge -text
