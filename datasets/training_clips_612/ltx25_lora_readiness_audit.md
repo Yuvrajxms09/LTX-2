@@ -47,7 +47,8 @@ loss that underweights the mouth.
 
 ### Dataset media invariants
 
-The current folder contains 19 MP4s. The media audit shows:
+The current folder contains 35 MP4s: the original 19 plus 16 newly added
+candidates. The media audit shows:
 
 - video: 1280x720, 25 fps, 153 decoded frames, 6.12 seconds;
 - audio: embedded AAC, 48 kHz, stereo, starts at 0;
@@ -68,7 +69,7 @@ manifest and will not be loaded as a sample.
 
 ### Manifest and source-of-truth pairing
 
-`dataset_manifest.jsonl` has 19 rows and only `video` plus neutral `caption`.
+`dataset_manifest.jsonl` has 35 rows and only `video` plus neutral `caption`.
 That is the right shape for this experiment. The official trainer convention
 recognizes `video` as the target video, `caption` as text conditioning, and
 auto-extracts the target audio when there is no explicit `audio` column.
@@ -100,14 +101,18 @@ and frames around 0.2, 0.4, and 1.0 seconds, and reject a clip if the intended
 speaker is not stable, the mouth is obscured/soft, a cut/fade/subtitle/watermark
 dominates the opening, or speech is already clipped. :codex-annotation{index="1"}
 
-The current first-frame review is a pass for all 19 clips as a hard gate, but
-not a clean-dataset pass. Known quality flags remain:
+The original first-frame review is a pass for the original 19 clips as a hard
+gate, but not a clean-dataset pass. The new 16 clips have a separate QA report;
+they also contain conditional examples. Known quality flags remain:
 
 - Ronaldo m1: lens flare/darker face;
 - Goggins: more 3/4 profile and microphone near the mouth;
 - Emma, Nicole, and Veronika: visible overlays/subtitles/watermarks;
 - Tom Cruise: begins essentially at speech onset, with little/no neutral lead-in;
 - Tom Holland host: wider shot, so the mouth has fewer pixels.
+- New 16: Maylene and Kaitlyn begin on phrase continuations; Camille has
+  sunglasses/hand-gesture issues; Ryan's vehicle clip is low light; several
+  outdoor clips add environmental variation. See `first_frame_qa_report_new_16.md`.
 
 Keep these for the first smoke test if desired, but do not call this the final
 quality dataset. Text overlays and watermarks can be learned as visual
@@ -304,7 +309,7 @@ video-VAE, and audio-VAE files belonging to the same release. Do not mix a
 ### 2. Precompute fresh latents
 
 The dataset currently has no precomputed tensors. Run the official
-`process_dataset.py` against the 19-row manifest with:
+`process_dataset.py` against the 35-row manifest with:
 
 ```text
 1280x704x153
@@ -355,7 +360,7 @@ latent using the same LTX-2.5 component files. Check:
 - decoded audio duration is 6.12 seconds, not an accidental longer source;
 - latent metadata has the expected latent frame count, spatial shape, FPS, and
   audio duration;
-- all 19 samples have one matching file in each required directory;
+- all 35 samples have one matching file in each required directory;
 - no conditions file came from an older LTX version.
 
 The [official trainer guide](https://github.com/Lightricks/LTX-2/blob/main/packages/ltx-trainer/docs/training-guide.md)
@@ -366,7 +371,7 @@ validation samples rather than relying on training loss alone.
 
 ### Dataset scale and identity leakage
 
-The 19 clips provide approximately 116 seconds of material. This is enough to
+The 35 clips provide approximately 214 seconds of material. This is enough to
 test the pipeline and determine whether the native LTX-2.5 path can learn a
 useful talking-head bias. It is not enough to claim robust universal
 phoneme-to-mouth generalization or “perfect” sync.
@@ -387,11 +392,12 @@ rank 32, learning rate 1e-4, batch size 1, and 2,000 steps; its reported final
 dataset was 26 clips and the author reported identity locking around step 1250.
 Those values are useful evidence that 6–10 seconds is a viable clip range, but
 that release is character-specific and internalizes voice/identity. It is not
-evidence that 19 heterogeneous clips can produce a universal lip-sync model.
+evidence that 35 heterogeneous clips can produce a universal lip-sync model.
 See the [published LTX-2.3 model card](https://huggingface.co/elix3r/LTX-2.3-22b-AV-LoRA-talking-head).
 
-With 19 clips and batch size 1, 1,000 steps is about 52.6 passes through the
-dataset. That is a reasonable smoke-test budget but is overfit-prone. Save
+With 35 clips and batch size 1, 1,000 steps is about 28.6 passes through the
+dataset; the notebook's 250-step smoke run is about 7.1 passes. That is a
+reasonable smoke-test budget but is still overfit-prone. Save
 every 100 steps and compare 300, 600, and 1,000-step outputs on held-out
 identity/audio. Select by validation sync and identity, not the lowest train
 loss. Do not jump straight to 2,000–3,000 steps just because the community
@@ -477,5 +483,5 @@ the current repository/configuration is not yet “run it blindly” ready. The
 right first experiment is a focused video+A2V LoRA with frozen audio, fresh
 LTX-2.5 preprocessing, real held-out validation, 100-step checkpoints, and
 selection by actual lip-sync/identity behavior. It should be treated as a
-baseline experiment, not as a path that can guarantee perfect lipsync from 19
+baseline experiment, not as a path that can guarantee perfect lipsync from 35
 clips.

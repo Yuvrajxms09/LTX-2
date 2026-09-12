@@ -18,7 +18,7 @@ Use Musubi as a reference implementation or a controlled second implementation i
 
 The blunt status of the current project is:
 
-- The source dataset is prepared for a smoke test: 19 paired MP4 clips, 1280x720, 25 FPS, 153 frames, approximately 6.12 seconds each, with embedded audio and a manifest.
+- The source dataset is prepared for a smoke test: 35 paired MP4 clips (the original 19 plus 16 new candidates), 1280x720, 25 FPS, 153 frames, approximately 6.12 seconds each, with embedded audio and a manifest.
 - The training objective and custom configuration are conceptually correct for native A2V.
 - The experiment is not end-to-end ready yet. The LTX-2.5 model assets, a clean Colab environment, and the precomputed video/audio/text caches still have to be produced and verified.
 - Nineteen clips can validate the pipeline. They cannot justify a claim of robust arbitrary-image + arbitrary-speech lipsync or “perfect” quality.
@@ -150,11 +150,11 @@ The [ComfyUI LTX2 trainer reference](/Users/yuvraj/Desktop/ltx/ltx2.5/comfyui_lt
 
 The current source folder is documented in [DATASET_README.md](/Users/yuvraj/Downloads/ltx_lipsync_sources/native_720p_all/training_clips_612/DATASET_README.md). The current state is:
 
-- 19 clips and 19 manifest rows;
+- 35 clips and 35 manifest rows;
 - all source videos are 1280x720, 25 FPS, 153 frames, about 6.12 seconds;
 - the manifest contains `video` and neutral visual `caption` only;
 - audio is embedded in the same MP4, so preprocessing can extract the paired waveform from the same source;
-- first-frame review passed the hard checks for all 19 clips, but several are conditional because of watermarks, subtitles, lens flare, a microphone, or wide framing: [first-frame QA report](/Users/yuvraj/Downloads/ltx_lipsync_sources/native_720p_all/training_clips_612/first_frame_qa_report.md);
+- the original first-frame review passed the hard checks for all 19 original clips, while the 16 new clips have a separate conditional review in `first_frame_qa_report_new_16.md`;
 - no `latents/`, `audio_latents/`, or `conditions/` cache is present yet.
 
 ### What is correct
@@ -163,7 +163,7 @@ Using real videos of real people speaking, with their own audio, is the correct 
 
 Keeping the audio embedded in the paired MP4 is also correct for this dataset. It prevents accidental video/audio pairing errors. If audio is split into separate files later, the split must preserve the exact start time and duration.
 
-The current 153-frame length is valid for LTX temporal alignment (`8*k+1`) and is a reasonable smoke-test bucket. Clips do not have to be the same duration in principle; the trainer can bucket them. With 19 samples and batch size 1, one fixed bucket is simpler and makes alignment failures obvious. Do not add synthetic silence to force durations.
+The current 153-frame length is valid for LTX temporal alignment (`8*k+1`) and is a reasonable smoke-test bucket. Clips do not have to be the same duration in principle; the trainer can bucket them. With 35 samples and batch size 1, one fixed bucket is simpler and makes alignment failures obvious. Do not add synthetic silence to force durations.
 
 The 6.12-second clips are not inherently too short. They are long enough to contain multiple phonemes, co-articulation, blinks, and expression transitions. They are too few in aggregate for robust generalization. A 6-second clip is acceptable for the first pipeline test; repeating the same tiny set until the loss looks good would only demonstrate memorization.
 
@@ -185,7 +185,7 @@ Generated talking-head clips from another model are not a better primary target.
 
 1. Use a fresh Colab environment with the exact LTX-2.5 package dependencies. The local macOS environment cannot validate the trainer import because its installed Pydantic is older than the package requirement; this is an environment issue, not evidence that the trainer is broken.
 2. Download matching LTX-2.5 transformer, Gemma 4 text encoder, video VAE, and audio VAE assets. Do not mix LTX-2.3, LTX-2.5, vanilla Gemma 4, or stale caches.
-3. Preprocess the 19 MP4s from the manifest into a new `1280x704x153` output directory. Let the official dataset processor extract and trim audio to the processed video duration.
+3. Preprocess the 35 MP4s from the manifest into a new `1280x704x153` output directory. Let the official dataset processor extract and trim audio to the processed video duration.
 4. Decode a few cached video/audio latents and verify shape, dtype, frame count, FPS, and duration before training. Do not start a 22B run before this check.
 5. Replace every placeholder path in [a2v_lipsync_lora.yaml](/Users/yuvraj/Desktop/ltx/ltx2.5/LTX-2/packages/ltx-trainer/configs/a2v_lipsync_lora.yaml), especially model assets, preprocessed data, validation image, and validation audio.
 
