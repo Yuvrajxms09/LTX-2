@@ -41,10 +41,10 @@ model:
   load_checkpoint: null
 
 lora:
-  # Rank 32 is enough capacity for the first native experiment without making
-  # a very small talking-head set unnecessarily easy to memorize.
-  rank: 32
-  alpha: 32
+  # Keep the proof-of-concept adapter small enough to limit memorization on the
+  # current talking-head dataset while retaining capacity in the A2V pathway.
+  rank: 16
+  alpha: 16
   dropout: 0.0
 
   # The attn1/attn2 groups cover video self-attention and video-to-text
@@ -87,10 +87,10 @@ training_strategy:
     latents_dir: "audio_latents"
 
 optimization:
-  # 1,000 steps is a useful first experiment inside the documented 500–2,000
-  # step LoRA range. Re-evaluate against held-out speakers before increasing it.
-  learning_rate: 1e-4
-  steps: 1000
+  # Conservative proof-of-concept settings. Promote only after held-out video
+  # shows better timing, word coverage, and teeth stability without face damage.
+  learning_rate: 5.0e-5
+  steps: 250
   batch_size: 1
   gradient_accumulation_steps: 1
   max_grad_norm: 1.0
